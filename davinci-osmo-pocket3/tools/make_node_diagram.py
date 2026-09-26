@@ -12,9 +12,10 @@ NODES = [
     ("05", "SAT", "Saturación / Color Slice / HSV", "fix"),
     ("06", "PIEL", "Calificador de piel (vacío)", "fix"),
     ("07", "VENTANAS", "Viñeta / power windows (vacío)", "fix"),
-    ("08", "OUT", "CST DWG/DI → Rec.709 Gamma 2.2", "out"),
+    ("08", "OUT", "CST DWG/DI → Rec.709 Gamma 2.4", "out"),
     ("09", "LOOK", "LUT KYROS · Key Output Gain 0.65", "look"),
     ("10", "FINISH", "Altas mate, sat final, grano", "look"),
+    ("11", "IPHONE", "LUT ENCODE → iPhone (no tocar)", "out"),
 ]
 COLORS = {  # relleno, borde
     "in": ("#dbeafe", "#1d4ed8"),
@@ -23,14 +24,16 @@ COLORS = {  # relleno, borde
     "look": ("#ede9fe", "#6d28d9"),
 }
 
-W, NW, NH, GAP = 1240, 208, 96, 36
+PER_ROW = 6
+NW, NH, GAP = 208, 96, 36
+W = 80 + PER_ROW * NW + (PER_ROW - 1) * GAP
 ROW_Y = (120, 330)
 
 
 def node_xy(i):
-    row, col = divmod(i, 5)
+    row, col = divmod(i, PER_ROW)
     if row == 1:
-        col = 4 - col  # vuelta en "S"
+        col = PER_ROW - 1 - col  # vuelta en "S"
     return 40 + col * (NW + GAP), ROW_Y[row]
 
 
@@ -39,20 +42,19 @@ def main():
            f'<rect width="{W}" height="520" fill="#ffffff"/>',
            '<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">'
            '<path d="M0,0 L10,5 L0,10 z" fill="#334155"/></marker></defs>',
-           '<text x="40" y="44" font-size="24" font-weight="700" fill="#0f172a">PowerGrade · Osmo Pocket 3 D-Log M → Rec.709 (redes)</text>',
-           '<text x="40" y="74" font-size="15" fill="#475569">Timeline: DaVinci WG/Intermediate · Output: Rec.709 Gamma 2.2 · Color science: DaVinci YRGB</text>']
+           '<text x="40" y="44" font-size="24" font-weight="700" fill="#0f172a">PowerGrade · Osmo Pocket 3 D-Log M → Rec.709 (redes, iPhone)</text>',
+           '<text x="40" y="74" font-size="15" fill="#475569">Timeline: DaVinci WG/Intermediate · Output: Rec.709 (Scene) · Color science: DaVinci YRGB</text>']
     # zonas
     x2, _ = node_xy(1)
-    x5, _ = node_xy(4)
-    out.append(f'<rect x="{x2 - 12}" y="96" width="{x5 + NW - x2 + 24}" height="{NH + 44}" rx="14" fill="none" stroke="#16a34a" stroke-dasharray="6 5"/>')
-    out.append(f'<text x="{x2}" y="{96 + NH + 36}" font-size="13" fill="#16a34a">aquí corriges: espacio DaVinci Wide Gamut / Intermediate</text>')
     x6, _ = node_xy(5)
+    out.append(f'<rect x="{x2 - 12}" y="96" width="{x6 + NW - x2 + 24}" height="{NH + 44}" rx="14" fill="none" stroke="#16a34a" stroke-dasharray="6 5"/>')
+    out.append(f'<text x="{x2}" y="{96 + NH + 36}" font-size="13" fill="#16a34a">aquí corriges: espacio DaVinci Wide Gamut / Intermediate</text>')
     x7, _ = node_xy(6)
-    out.append(f'<rect x="{x7 - 12}" y="306" width="{x6 + NW - x7 + 24}" height="{NH + 44}" rx="14" fill="none" stroke="#16a34a" stroke-dasharray="6 5"/>')
+    out.append(f'<rect x="{x7 - 12}" y="306" width="{NW + 24}" height="{NH + 44}" rx="14" fill="none" stroke="#16a34a" stroke-dasharray="6 5"/>')
     x9, _ = node_xy(8)
     x10, _ = node_xy(9)
     out.append(f'<rect x="{x10 - 12}" y="306" width="{x9 + NW - x10 + 24}" height="{NH + 44}" rx="14" fill="none" stroke="#6d28d9" stroke-dasharray="6 5"/>')
-    out.append(f'<text x="{x10}" y="{306 + NH + 36}" font-size="13" fill="#6d28d9">look en espacio de pantalla (Rec.709)</text>')
+    out.append(f'<text x="{x10}" y="{306 + NH + 36}" font-size="13" fill="#6d28d9">look en espacio de pantalla (Rec.709 G2.4)</text>')
     # flechas
     for i in range(len(NODES) - 1):
         (xa, ya), (xb, yb) = node_xy(i), node_xy(i + 1)
@@ -80,7 +82,7 @@ def main():
         lines.append(cur)
         for k, line in enumerate(lines[:2]):
             out.append(f'<text x="{x + 14}" y="{y + 58 + k * 20}" font-size="14" fill="#1e293b">{line}</text>')
-    out.append('<text x="40" y="500" font-size="13" fill="#64748b">Fotos DNG: 01 IN apagado (el RAW ya se decodifica a DWG/DI) y 08 OUT → sRGB.</text>')
+    out.append('<text x="40" y="500" font-size="13" fill="#64748b">Fotos DNG: 01 IN y 11 IPHONE apagados, 08 OUT → sRGB. Para público Android/TV: apaga 11 y pon el Output en Rec.709 Gamma 2.4.</text>')
     out.append("</svg>")
     path = os.path.join(HERE, "..", "docs", "node-tree.svg")
     with open(path, "w") as f:

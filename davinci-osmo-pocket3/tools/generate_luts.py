@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
-Genera el LUT de entrada para DJI Osmo Pocket 3:
+Genera los LUTs de la plantilla:
+
+1. Entrada DJI Osmo Pocket 3:
     D-Log M (Pocket 3)  ->  DaVinci Wide Gamut / DaVinci Intermediate
+2. Salida para iPhone (nodo 11 IPHONE):
+    Rec.709 Gamma 2.4  ->  codificación que iOS muestra igual (1-1-1, gamma 1.961)
 
 Por qué un LUT y no un CST nativo: DaVinci Resolve no trae D-Log M en el
 Color Space Transform (el "DJI D-Log" de Resolve es otro perfil y satura de
@@ -68,6 +72,18 @@ def p3_dlogm_to_dwg_di(rgb):
     lin = p3_dlogm_to_linear(rgb)
     dwg = lin @ P3_NATIVE_TO_DWG.T
     return linear_to_di(dwg)
+
+
+# --- Codificación para iPhone ---------------------------------------------
+# iOS/macOS (AVFoundation/ColorSync) muestran los videos etiquetados Rec.709
+# 1-1-1 con una gamma de ~1.961, no 2.4. Re-codificamos para que la luz que ve
+# el iPhone sea exactamente la de una calificación en gamma 2.4 (la idea de
+# Rec.709-A, pero explícita en un nodo).
+APPLE_GAMMA = 1.961
+
+
+def g24_to_apple(v):
+    return np.power(np.clip(np.asarray(v, dtype=np.float64), 0, 1), 2.4 / APPLE_GAMMA)
 
 
 # --- Escritura / lectura .cube ---------------------------------------------
@@ -138,11 +154,34 @@ def validate(path):
     return err.max()
 
 
+def write_iphone_lut(size=33):
+    name = "ENCODE_Rec709-G2.4_to_iPhone.cube"
+    path = os.path.join(OUT_DIR, name)
+    write_cube(
+        path,
+        "Rec709 Gamma 2.4 to Apple 1-1-1 (gamma 1.961)",
+        g24_to_apple(lattice(size)),
+        comments=(
+            "INPUT: Rec.709 Gamma 2.4 (despues de OUT, LOOK y FINISH)",
+            "OUTPUT: Rec.709 para iOS/macOS: exporta con Output color space Rec.709 (Scene) = tag 1-1-1",
+            "Un iPhone lo muestra con gamma ~1.961 -> se ve igual que la calificacion en gamma 2.4",
+            "Generado por tools/generate_luts.py",
+        ),
+    )
+    lut = read_cube(path)
+    x = np.random.default_rng(3).random((200_000, 3))
+    err = np.abs(apply_trilinear(lut, x) - g24_to_apple(x)).max()
+    shown = apply_trilinear(lut, np.array([[0.41, 0.41, 0.41]]))[0, 0] ** APPLE_GAMMA
+    print(f"Escrito {name}\n  error máx vs. fórmula: {err:.5f}\n"
+          f"  gris 0.41 (G2.4) -> luz en iPhone {shown:.4f} (ideal {0.41 ** 2.4:.4f})")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--size", type=int, default=65, choices=(17, 33, 65))
     args = ap.parse_args()
     os.makedirs(OUT_DIR, exist_ok=True)
+    write_iphone_lut()
 
     table = p3_dlogm_to_dwg_di(lattice(args.size))
     name = f"P3_DLogM_to_DWG-DI_{args.size}.cube"
