@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+# previews de clips reales (pueden mostrar personas): no se suben
+preview_clip*.png
