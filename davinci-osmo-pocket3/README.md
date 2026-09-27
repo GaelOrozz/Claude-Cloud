@@ -110,22 +110,29 @@ En el iPad, **mantener presionado = clic derecho**. Para etiquetar un nodo: mant
 | 05 | **SAT** | — | **Sat** general, curvas **Hue vs Sat** o **Color Slice**. Aquí bajas cianes/azules si KYROS los empuja de más. |
 | 06 | **PIEL** | vacío | Calificador HSL sobre la piel → para protegerla o calentarla. Vacío no hace nada. |
 | 07 | **VENTANAS** | vacío | Viñeta (ventana circular invertida, baja un poco Gain/Offset) o ventanas para iluminar la cara. |
-| 08 | **OUT** | Effects → **Color Space Transform** | Ver ajustes abajo. **No lo toques después.** |
+| 08 | **OUT** | Efectos → **Cambio del espacio cromático** (Color Space Transform) | Ver ajustes abajo. **No lo toques después.** |
 | 09 | **LOOK** | LUT `KYROS_SOFT` (el completo) | Paleta **Key** → **Key Output Gain**: **0.65** = KYROS SOFT exacto; 1.0 = completo; 0.4 = más natural. |
 | 10 | **FINISH** | — | Toques finales en Rec.709: baja el punto blanco de la curva a ~92–94% para las altas mate de tus referencias, un toque de sat, grano (Film Grain es de Studio). |
 | 11 | **IPHONE** | LUT `ENCODE_Rec709-G2.4_to_iPhone` | **Nada.** Siempre el último nodo. Apágalo solo para fotos o si el video es para público Android/TV. |
 
-**Ajustes del CST en el nodo 08 OUT:**
+**Ajustes de "Cambio del espacio cromático" en el nodo 08 OUT** (nombres tal cual salen en Resolve 21 iPad en español):
 
-| Campo | Valor |
-|---|---|
-| Input Color Space | DaVinci Wide Gamut |
-| Input Gamma | DaVinci Intermediate |
-| Output Color Space | Rec.709 |
-| Output Gamma | **Gamma 2.4** (el nodo 11 se encarga del iPhone) |
-| Tone Mapping Method | **DaVinci** |
-| Gamut Mapping Method | **Saturation Compression** |
-| Lo demás | default (Forward/Inverse OOTF apagados) |
+| Sección | Campo | Valor |
+|---|---|---|
+| Cambio del espacio cromático | Espacio cromático inicial | **DaVinci Wide Gamut** |
+| | Gamma inicial | **DaVinci Intermediate** |
+| | Espacio cromático final | **Rec.709** |
+| | Gamma final | **Gamma 2.4** (el nodo 11 se encarga del iPhone) |
+| | Botón "Intercambiar" | No lo toques |
+| Asignación de tonos | Asignación de tonos | **DaVinci** |
+| | Valor inicial / final máx. personalizado | Apagados |
+| | Adaptación | **9.00** (default) |
+| Asignación de espectro cromático | Método | **Compresión de saturación** (viene en "Ninguno": cámbialo). Los sliders que aparecen, en default. |
+| Opciones avanzadas | Aplicar OOTF hacia adelante / Aplicar OOTF inverso | **Apagados** |
+| | Usar adaptación de punto blanco | Déjalo como viene (prendido); los dos espacios son D65, no cambia nada |
+| | Usar conversión de formato / Usar blanco difuso | Déjalos como vienen (grises) |
+
+> **Ojo con "Línea de tiempo":** el efecto trae los 4 campos de arriba en *Línea de tiempo*. Cámbialos **todos** a mano. Si dejas el final en *Línea de tiempo*, el nodo convierte de DWG/DI a DWG/DI (o sea, nada) y la imagen se ve lavada.
 
 Reglas para no romper la conversión:
 
@@ -167,11 +174,11 @@ La idea: que el RAW se decodifique **directo a DWG/DI**, así las fotos entran a
    (También lo puedes hacer foto por foto en la paleta **Camera RAW** con *Decode Using: Clip*.)
 2. Aplica el PowerGrade `P3 FOTO`, que es el mismo árbol pero con:
    - **01 IN apagado** (mantén presionado → desactivar nodo). El RAW ya viene en DWG/DI; si le dejas el LUT, se convierte dos veces.
-   - **08 OUT → Output Color Space: sRGB, Output Gamma: sRGB.**
+   - **08 OUT → Espacio cromático final: sRGB, Gamma final: sRGB.**
    - **11 IPHONE apagado.** Las fotos sRGB el iPhone ya las muestra bien.
 3. Para exportar fotos (JPEG/HEIF/TIFF desde la página Photo), pon el **Output color space del proyecto en sRGB** para que el archivo salga etiquetado sRGB y el visor coincida. Si mezclas fotos y videos en el mismo proyecto, cámbialo antes de exportar cada cosa (o usa un proyecto aparte para fotos, que es más fácil).
 
-**Si en Camera RAW no te aparecen DaVinci Wide Gamut / Intermediate:** elige **Color Space: Rec.2020** y **Gamma: Linear**, y en el nodo **01 IN** en vez del LUT pon un **CST** de *Rec.2020 / Linear* → *DaVinci Wide Gamut / DaVinci Intermediate* (tone mapping: None). Queda igual de correcto.
+**Si en Camera RAW no te aparecen DaVinci Wide Gamut / Intermediate:** elige **Color Space: Rec.2020** y **Gamma: Linear**, y en el nodo **01 IN** en vez del LUT pon un **Cambio del espacio cromático** de *Rec.2020 / Linear* → *DaVinci Wide Gamut / DaVinci Intermediate* (Asignación de tonos: Ninguno; Método de espectro: Ninguno). Queda igual de correcto.
 
 **Fotos JPEG** (no RAW): ya vienen en sRGB. Apaga **01, 08 y 11** y usa solo 02–07 + LOOK.
 
@@ -217,7 +224,7 @@ Con tu 75/25, el nodo 11 es la mejor apuesta. Si algún video va para YouTube en
 
 ## Si grabaste en HLG o en Normal
 
-- **HLG:** en el nodo **01 IN**, en vez del LUT pon un **CST**: Input *Rec.2020 / Rec.2100 HLG* → Output *DaVinci Wide Gamut / DaVinci Intermediate*, Tone Mapping *None*. Lo demás igual.
+- **HLG:** en el nodo **01 IN**, en vez del LUT pon un **Cambio del espacio cromático**: inicial *Rec.2020 / Rec.2100 HLG* → final *DaVinci Wide Gamut / DaVinci Intermediate*, Asignación de tonos *Ninguno*. Lo demás igual.
 - **Normal:** ya viene en Rec.709. Apaga **01 y 08** y usa 02–07 + LOOK.
 
 ## Plan B: LUT oficial de DJI
