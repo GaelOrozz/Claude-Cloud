@@ -16,6 +16,13 @@ Dashboard estilo "bento" (React + Tailwind) con datos de ejemplo para dos cuenta
 - Público: género y países/ciudades principales con barras finas.
 - Gráfica spline de interacciones (diaria o mensual) con tooltip al pasar el cursor o con las flechas del teclado.
 - Botón **Editar** para cambiar el titular, el resumen y la meta de seguidores, y **Ajustes** para cambiar el formato de números o ocultar la comparación con el mes anterior.
+- Tema **claro/oscuro** con el botón de luna/sol. Sin elegir, sigue el tema del sistema. En oscuro, la tarjeta de resumen se invierte a clara para seguir destacando.
+- Sección de **Recomendaciones** con 5 pestañas:
+  - *Para tu cuenta*: 4 insights calculados con los datos de la cuenta activa (formato ganador, mejor día, ritmo hacia la meta y público).
+  - *Tendencias*, *Viralidad* y *Engagement*: consejos investigados en septiembre de 2026, cada uno con sus fuentes y un botón "Lo probé" para llevar el control.
+  - *Hooks*: estructura de un reel que retiene y 8 plantillas de hooks con botón para copiar.
+
+Los consejos viven en las constantes `TIPS`, `HOOKS` y `SOURCES`; actualízalas cuando cambien las tendencias.
 
 ## Conectar datos reales
 
