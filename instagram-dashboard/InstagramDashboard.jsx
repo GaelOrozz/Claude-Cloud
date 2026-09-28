@@ -1,16 +1,22 @@
-import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 /* ------------------------------------------------------------------ */
-/*  Datos de ejemplo (mock). Sustituye ACCOUNTS por la respuesta de    */
-/*  tu API/base de datos respetando la misma forma.                    */
+/*  Datos de ejemplo. Se usan mientras no hay conexión en vivo (por    */
+/*  ejemplo, fuera de claude.ai) y para cuentas no conectadas.         */
 /* ------------------------------------------------------------------ */
 
 const PERIOD = { label: "Agosto 2026", month: "agosto", prevMonth: "julio", short: "ago", year: 2026, monthIndex: 7, days: 31 };
 const MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago"];
 const MONTHS_LONG = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto"];
 const WEEKDAYS = ["domingos", "lunes", "martes", "miércoles", "jueves", "viernes", "sábados"];
+const TONES = [
+  "linear-gradient(135deg,#3A3A3C,#1C1C1E)",
+  "linear-gradient(135deg,#AEAEB2,#636366)",
+  "linear-gradient(135deg,#C7C7CC,#8E8E93)",
+  "linear-gradient(135deg,#8E8E93,#3A3A3C)",
+];
 
-const ACCOUNTS = [
+const SAMPLE_ACCOUNTS = [
   {
     id: "principal",
     name: "Principal",
@@ -33,10 +39,10 @@ const ACCOUNTS = [
       { id: "p-1", text: "Campaña #VeranoCreativo: 3 reels patrocinados, cerró el 21 ago.", date: "21 ago 2026" },
     ],
     posts: [
-      { id: "p1", title: "Detrás de cámaras: rodaje en CDMX", type: "reel", day: 26, views: 412800, likes: 28400, tone: "linear-gradient(135deg,#3A3A3C,#1C1C1E)" },
-      { id: "p2", title: "5 errores al editar tus reels", type: "carrusel", day: 21, views: 186200, likes: 14100, tone: "linear-gradient(135deg,#AEAEB2,#636366)" },
-      { id: "p3", title: "Atardecer en Valle de Bravo", type: "foto", day: 17, views: 94600, likes: 9800, tone: "linear-gradient(135deg,#C7C7CC,#8E8E93)" },
-      { id: "p4", title: "Mi setup de edición 2026", type: "reel", day: 12, views: 268900, likes: 19300, tone: "linear-gradient(135deg,#8E8E93,#3A3A3C)" },
+      { id: "p1", title: "Detrás de cámaras: rodaje en CDMX", type: "reel", day: 26, views: 412800, likes: 28400 },
+      { id: "p2", title: "5 errores al editar tus reels", type: "carrusel", day: 21, views: 186200, likes: 14100 },
+      { id: "p3", title: "Atardecer en Valle de Bravo", type: "foto", day: 17, views: 94600, likes: 9800 },
+      { id: "p4", title: "Mi setup de edición 2026", type: "reel", day: 12, views: 268900, likes: 19300 },
     ],
     gender: [
       { label: "Mujeres", value: 58.4 },
@@ -83,10 +89,10 @@ const ACCOUNTS = [
       { id: "k-1", text: "Lanzamiento colección Otoño con 2 creadores invitados (28 ago).", date: "28 ago 2026" },
     ],
     posts: [
-      { id: "k1", title: "Lanzamiento: colección Otoño", type: "reel", day: 28, views: 142300, likes: 9600, tone: "linear-gradient(135deg,#3A3A3C,#1C1C1E)" },
-      { id: "k2", title: "Cómo elegimos nuestros materiales", type: "carrusel", day: 23, views: 58700, likes: 4200, tone: "linear-gradient(135deg,#C7C7CC,#8E8E93)" },
-      { id: "k3", title: "Lookbook nocturno", type: "foto", day: 18, views: 31400, likes: 3100, tone: "linear-gradient(135deg,#8E8E93,#3A3A3C)" },
-      { id: "k4", title: "Un día en el estudio", type: "reel", day: 11, views: 96800, likes: 6900, tone: "linear-gradient(135deg,#AEAEB2,#636366)" },
+      { id: "k1", title: "Lanzamiento: colección Otoño", type: "reel", day: 28, views: 142300, likes: 9600 },
+      { id: "k2", title: "Cómo elegimos nuestros materiales", type: "carrusel", day: 23, views: 58700, likes: 4200 },
+      { id: "k3", title: "Lookbook nocturno", type: "foto", day: 18, views: 31400, likes: 3100 },
+      { id: "k4", title: "Un día en el estudio", type: "reel", day: 11, views: 96800, likes: 6900 },
     ],
     gender: [
       { label: "Hombres", value: 54.2 },
@@ -111,8 +117,57 @@ const ACCOUNTS = [
   },
 ];
 
-const TYPE_LABEL = { reel: "Reel", carrusel: "Carrusel", foto: "Foto" };
-const TYPE_ICON = { reel: "play", carrusel: "copy", foto: "image" };
+const TYPE_LABEL = { reel: "Reel", carrusel: "Carrusel", foto: "Foto", historia: "Historia" };
+const TYPE_ICON = { reel: "play", carrusel: "copy", foto: "image", historia: "play" };
+
+/* ------------------------------------------------------------------ */
+/*  Datos en vivo (capability `mcp` del artefacto)                     */
+/*  · Instagram: conector Composio (Instagram Graph API)               */
+/*  · TikTok: conector Metricool                                       */
+/* ------------------------------------------------------------------ */
+
+const CP_SERVER = "Composio";
+const CP_TOOL = "COMPOSIO_MULTI_EXECUTE_TOOL";
+const MC_SERVER = "Metricool Social Media Management";
+const MC_BRANDS = "getBrandSettings";
+const MC_DATA = "getAnalyticsDataByMetrics";
+const TK_EVOLUTION = ["TKEV07", "TKEV02", "TKEV06", "TKEV11"]; // Metricool devuelve { rows: [[...valores, "AAAAMMDD"]] }
+const CACHE_OPTIONS = { staleTime: 5 * 60 * 1000, gcTime: 24 * 60 * 60 * 1000 };
+
+// Métricas totales de cuenta que se piden a Instagram para cada ventana de 30 días
+const IG_TOTALS = ["reach", "views", "accounts_engaged", "total_interactions", "likes", "comments", "shares", "saves", "replies", "profile_views"];
+
+// Estos códigos significan que el acceso ya no vale: se retiran los datos mostrados
+const RETRACT_CODES = new Set(["needs_reauth", "server_not_connected", "blocked_by_policy", "approval_required", "not_in_manifest", "selection_required", "not_granted", "capability_disabled", "capability_removed"]);
+
+function errorCopy(err, service = "Composio") {
+  if (!err) return "";
+  switch (err.code) {
+    case "server_not_connected":
+      return `Agrega ${service} en claude.ai → Configuración → Conectores para ver tus datos reales.`;
+    case "selection_required":
+      return `Tienes más de una conexión de ${service}. Elige cuál usar en el aviso de claude.ai.`;
+    case "needs_reauth":
+      return `Tu conexión con ${service} expiró. Reconéctala en claude.ai → Configuración → Conectores.`;
+    case "not_in_manifest":
+      return `Esta página no tiene permiso para leer ${service}. Recárgala y acepta el acceso cuando te lo pida.`;
+    case "blocked_by_policy":
+      return `Tu organización no permite usar ${service} desde esta página.`;
+    case "approval_required":
+      return `Tu organización pide aprobar cada consulta a ${service}, y eso todavía no funciona en esta página.`;
+    case "server_unavailable":
+      return `${service} no respondió a tiempo. Intenta de nuevo en un momento.`;
+    case "not_granted":
+    case "capability_disabled":
+    case "capability_removed":
+      return "Esta vista no puede usar conectores.";
+    case "tool_error":
+      return `${service} devolvió un error${err.message ? `: ${err.message}` : "."}`;
+    default:
+      return `No se pudo leer ${service}. Intenta de nuevo en un momento.`;
+  }
+}
+const canRetry = (err) => !!err && (err.retryable || err.code === "server_unavailable" || err.code === "upstream_error" || err.code === "tool_error");
 
 /* ------------------------------------------------------------------ */
 /*  Investigación de tendencias (septiembre 2026)                      */
@@ -191,8 +246,10 @@ const REEL_STRUCTURE = [
 
 const nf = new Intl.NumberFormat("es-MX");
 const trimZeros = (s) => s.replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
+const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 
 function formatNumber(n, compact = true) {
+  if (!isNum(n)) return "—";
   const r = Math.round(n);
   if (!compact) return nf.format(r);
   const a = Math.abs(r);
@@ -208,19 +265,17 @@ function formatAxis(n) {
   return String(n);
 }
 
+const signedPct = (v, digits = 1) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(digits)}%`;
 const pctChange = (cur, prev) => ((cur - prev) / prev) * 100;
+const deltaOrNull = (cur, prev) => (isNum(cur) && isNum(prev) && prev > 0 ? pctChange(cur, prev) : null);
 const sum = (arr) => arr.reduce((a, b) => a + b, 0);
 const avg = (arr) => (arr.length ? sum(arr) / arr.length : 0);
 const argmax = (arr) => arr.reduce((best, v, i) => (v > arr[best] ? i : best), 0);
 const argmin = (arr) => arr.reduce((best, v, i) => (v < arr[best] ? i : best), 0);
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
-
-function dayLabel(day) {
-  const d = new Date(PERIOD.year, PERIOD.monthIndex, day);
-  const wd = d.toLocaleDateString("es-MX", { weekday: "short" }).replace(".", "");
-  return `${wd} ${day} ${PERIOD.short}`;
-}
+const toNum = (v) => (v == null || v === "" ? null : Number.isFinite(Number(v)) ? Number(v) : null);
+const sumNullable = (arr) => (arr.some(isNum) ? sum(arr.filter(isNum)) : null);
 
 function todayLabel() {
   return capitalize(new Date().toLocaleDateString("es-MX", { weekday: "long", day: "numeric", month: "long", year: "numeric" }));
@@ -230,24 +285,92 @@ function shortDate(d = new Date()) {
   return d.toLocaleDateString("es-MX", { day: "numeric", month: "short", year: "numeric" }).replace(".", "");
 }
 
-// Promedio de interacciones por día de la semana (0 = domingo)
-function weekdayAverages(daily) {
+// Fechas "de calendario": se guardan como timestamps UTC al mediodía para no depender de la zona del visitante
+const utcDay = (y, m, d) => Date.UTC(y, m, d, 12);
+const DAY_MS = 86400000;
+function fmtUtc(ts, opts) {
+  return new Date(ts).toLocaleDateString("es-MX", { timeZone: "UTC", ...opts }).replace(/\./g, "");
+}
+const dayMonth = (ts) => `${new Date(ts).getUTCDate()} ${fmtUtc(ts, { month: "short" })}`;
+const weekdayDayMonth = (ts) => `${fmtUtc(ts, { weekday: "short" })} ${dayMonth(ts)}`;
+function rangeText(fromTs, toTs) {
+  return `${dayMonth(fromTs)} – ${dayMonth(toTs)} ${new Date(toTs).getUTCFullYear()}`;
+}
+// Momento real (hora local del visitante), p. ej. para historias
+function localDayTime(ts) {
+  const d = new Date(ts);
+  const day = `${d.getDate()} ${d.toLocaleDateString("es-MX", { month: "short" }).replace(".", "")}`;
+  return `${day}, ${d.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}`;
+}
+function ymdToTs(ymd) {
+  const m = String(ymd).match(/^(\d{4})-?(\d{2})-?(\d{2})/);
+  return m ? utcDay(+m[1], +m[2] - 1, +m[3]) : null;
+}
+const tsToKey = (ts) => new Date(ts).toISOString().slice(0, 10).replace(/-/g, "");
+
+function tzOffset(timeZone) {
+  try {
+    const part = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "shortOffset" }).formatToParts(new Date()).find((p) => p.type === "timeZoneName");
+    const m = part && part.value.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
+    return m ? `${m[1]}${m[2].padStart(2, "0")}:${m[3] || "00"}` : "+00:00";
+  } catch {
+    return "-06:00";
+  }
+}
+function todayIn(timeZone) {
+  try {
+    return ymdToTs(new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()));
+  } catch {
+    const d = new Date();
+    return utcDay(d.getFullYear(), d.getMonth(), d.getDate());
+  }
+}
+
+// Últimos 30 días completos en la zona horaria de la marca (para Metricool)
+function metricoolWindow(timeZone) {
+  const off = tzOffset(timeZone);
+  const today = todayIn(timeZone);
+  const start = today - 30 * DAY_MS;
+  const iso = (ts, time) => `${new Date(ts).toISOString().slice(0, 10)}T${time}${off}`;
+  return { days: Array.from({ length: 30 }, (_, i) => start + i * DAY_MS), from: iso(start, "00:00:00"), to: iso(today, "23:59:59") };
+}
+
+// Ventanas de 30 días para Instagram, redondeadas a la hora para que la caché sirva entre recargas
+function instagramWindows() {
+  const until = Math.floor(Date.now() / 3600000) * 3600;
+  const since = until - 30 * 86400;
+  return { until, since, prevSince: since - 30 * 86400 };
+}
+
+let regionNames = null;
+function countryName(code) {
+  try {
+    regionNames = regionNames || new Intl.DisplayNames(["es"], { type: "region" });
+    return regionNames.of(code) || code;
+  } catch {
+    return code;
+  }
+}
+
+function weekdayAveragesFrom(pairs) {
   const sums = Array(7).fill(0);
   const counts = Array(7).fill(0);
-  daily.forEach((v, i) => {
-    const wd = new Date(PERIOD.year, PERIOD.monthIndex, i + 1).getDay();
+  pairs.forEach(([ts, v]) => {
+    if (!isNum(v)) return;
+    const wd = new Date(ts).getUTCDay();
     sums[wd] += v;
     counts[wd] += 1;
   });
-  return sums.map((s, i) => (counts[i] ? s / counts[i] : 0));
+  return sums.map((s, i) => (counts[i] ? s / counts[i] : null));
 }
 
 // Escala "bonita": el menor paso (1, 2, 2.5, 5 × 10^n) que cubre el máximo en ≤ 5 divisiones
 function niceScale(maxVal) {
   const steps = [];
   for (let e = 0; e <= 8; e++) for (const m of [1, 2, 2.5, 5]) steps.push(m * 10 ** e);
-  const step = steps.find((s) => Math.ceil(maxVal / s) <= 5) || steps[steps.length - 1];
-  const count = Math.max(1, Math.ceil(maxVal / step));
+  const safeMax = Math.max(1, maxVal);
+  const step = steps.find((s) => Math.ceil(safeMax / s) <= 5) || steps[steps.length - 1];
+  const count = Math.max(1, Math.ceil(safeMax / step));
   return { max: count * step, ticks: Array.from({ length: count + 1 }, (_, i) => i * step) };
 }
 
@@ -303,33 +426,576 @@ function systemTheme() {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Modelo de ejemplo: cada cuenta (ejemplo o en vivo) se convierte en */
+/*  la misma forma que leen las tarjetas.                              */
+/* ------------------------------------------------------------------ */
+
+function sampleModel(r) {
+  const net = r.followersEnd - r.followersStart;
+  const dayTs = r.daily.map((_, i) => utcDay(PERIOD.year, PERIOD.monthIndex, i + 1));
+  const tip = dayTs.map(weekdayDayMonth);
+  const peak = argmax(r.daily);
+  const monthPeak = argmax(r.monthly);
+  const postViews = sum(r.posts.map((p) => p.views));
+
+  return {
+    id: r.id,
+    name: r.name,
+    handle: r.handle,
+    initial: r.initial,
+    source: "sample",
+    periodLabel: PERIOD.label,
+    rangeLabel: `1 – 31 ${PERIOD.short} ${PERIOD.year}`,
+    compareSuffix: `vs ${PERIOD.prevMonth}`,
+    hero: {
+      badge: "Mensual",
+      primary: { label: "Visualizaciones totales", value: r.views, delta: pctChange(r.views, r.viewsPrev) },
+      secondary: { label: "Seguidores netos del mes", value: net, signed: true, note: `${nf.format(r.followersEnd)} seguidores en total` },
+      minis: [
+        { icon: "heart", label: "Interacciones", value: r.interactions, delta: pctChange(r.interactions, r.interactionsPrev), note: "likes, comentarios y más" },
+        { icon: "trending", label: "Crecimiento", value: (net / r.followersStart) * 100, format: "signedPercent", note: "de seguidores" },
+        { icon: "radio", label: "Alcance", value: r.reach, delta: pctChange(r.reach, r.reachPrev), note: "cuentas únicas" },
+        { icon: "activity", label: "Engagement", value: (r.interactions / r.views) * 100, format: "percent", note: "interacciones / vistas" },
+      ],
+    },
+    milestone: r.milestone,
+    seedNotes: r.seedNotes,
+    followers: r.followersEnd,
+    peak: { title: "Día récord", sub: `${tip[peak]} · interacciones`, value: r.daily[peak] },
+    posts: {
+      state: "ready",
+      subtitle: "Publicaciones recientes",
+      items: r.posts.map((p, i) => ({
+        id: p.id,
+        title: p.title,
+        type: p.type,
+        icon: TYPE_ICON[p.type],
+        ts: utcDay(PERIOD.year, PERIOD.monthIndex, p.day),
+        dateLabel: `${p.day} ${PERIOD.short}`,
+        primary: p.views,
+        secondary: { icon: "heart", label: "Me gusta", value: p.likes },
+        tone: TONES[i % TONES.length],
+      })),
+      note: (
+        <>
+          Estas 4 publicaciones generaron el <strong>{((postViews / r.views) * 100).toFixed(0)}%</strong> de tus visualizaciones de {PERIOD.month}.
+        </>
+      ),
+    },
+    audience: {
+      subtitle: `Seguidores al 31 ${PERIOD.short} ${PERIOD.year}`,
+      gender: r.gender,
+      locations: { countries: r.countries, cities: r.cities },
+    },
+    charts: [
+      {
+        id: "daily",
+        label: "Diario",
+        subtitle: `Interacciones por día · ${PERIOD.month} ${PERIOD.year}`,
+        values: r.daily,
+        tipLabels: tip,
+        axisLabels: r.daily.map((_, i) => (i % 7 === 0 ? `${i + 1} ${PERIOD.short}` : "")),
+        unit: "interacciones",
+        total: sum(r.daily),
+        totalLabel: `interacciones en ${PERIOD.month}`,
+        delta: pctChange(r.interactions, r.interactionsPrev),
+        deltaSuffix: `vs ${PERIOD.prevMonth}`,
+        stats: [
+          { label: "Promedio diario", value: avg(r.daily) },
+          { label: "Día récord", value: r.daily[peak], sub: tip[peak] },
+        ],
+        ariaLabel: `Interacciones diarias de ${r.name} en ${PERIOD.month} ${PERIOD.year}`,
+      },
+      {
+        id: "monthly",
+        label: "Mensual",
+        subtitle: `Interacciones por mes · ene – ${PERIOD.short} ${PERIOD.year}`,
+        values: r.monthly,
+        tipLabels: MONTHS_LONG.map((m) => `${m} ${PERIOD.year}`),
+        axisLabels: MONTHS,
+        unit: "interacciones",
+        total: sum(r.monthly),
+        totalLabel: `interacciones en ${PERIOD.year}`,
+        delta: pctChange(r.monthly[r.monthly.length - 1], r.monthly[0]),
+        deltaSuffix: `${PERIOD.short} vs ene`,
+        stats: [
+          { label: "Promedio mensual", value: avg(r.monthly) },
+          { label: "Mejor mes", value: r.monthly[monthPeak], sub: `${MONTHS_LONG[monthPeak]} ${PERIOD.year}` },
+        ],
+        ariaLabel: `Interacciones mensuales de ${r.name}, enero a ${PERIOD.month} ${PERIOD.year}`,
+      },
+    ],
+    buildInsights: (goal) => sampleInsights(r, goal, dayTs),
+    networks: null,
+  };
+}
+
+function sampleInsights(r, goalValue, dayTs) {
+  const reels = r.posts.filter((p) => p.type === "reel");
+  const others = r.posts.filter((p) => p.type !== "reel");
+  const reelAvg = avg(reels.map((p) => p.views));
+  const otherAvg = avg(others.map((p) => p.views));
+  const weekday = weekdayAveragesFrom(dayTs.map((ts, i) => [ts, r.daily[i]]));
+  const best = argmax(weekday.map((v) => (isNum(v) ? v : -Infinity)));
+  const worst = argmin(weekday.map((v) => (isNum(v) ? v : Infinity)));
+  const net = r.followersEnd - r.followersStart;
+  const perDay = net / PERIOD.days;
+  const goal = Math.max(1, Number(goalValue) || r.milestone.goal);
+  const remaining = Math.max(0, goal - r.followersEnd);
+  const topGender = [...r.gender].sort((a, b) => b.value - a.value)[0];
+
+  return [
+    {
+      id: "format",
+      icon: "play",
+      label: "Formato ganador",
+      stat: `${(reelAvg / otherAvg).toFixed(1)}×`,
+      text: `Tus reels promedian ${formatNumber(reelAvg)} vistas contra ${formatNumber(otherAvg)} de tus carruseles y fotos.`,
+      action: "Sube a 3 o 4 reels por semana y convierte tu carrusel con más vistas en reel.",
+    },
+    {
+      id: "weekday",
+      icon: "calendar",
+      label: "Tu mejor día",
+      stat: capitalize(WEEKDAYS[best]),
+      text: `Los ${WEEKDAYS[best]} promedias ${nf.format(Math.round(weekday[best]))} interacciones, ${pctChange(weekday[best], weekday[worst]).toFixed(0)}% más que los ${WEEKDAYS[worst]}.`,
+      action: `Guarda tu mejor contenido para los ${WEEKDAYS[best]} y usa los ${WEEKDAYS[worst]} para probar hooks.`,
+    },
+    remaining > 0
+      ? {
+          id: "goal",
+          icon: "target",
+          label: "Ritmo hacia tu meta",
+          stat: `~${Math.ceil(remaining / perDay)} días`,
+          text: `Al ritmo de ${PERIOD.month} (+${nf.format(Math.round(perDay))} seguidores al día) te faltan ${nf.format(remaining)} para llegar a ${nf.format(goal)}.`,
+          action: "Acelera con un post en colaboración o un «comenta PALABRA» esta semana.",
+        }
+      : {
+          id: "goal",
+          icon: "target",
+          label: "Ritmo hacia tu meta",
+          stat: "Cumplida",
+          text: `Ya pasaste tu meta de ${nf.format(goal)} seguidores.`,
+          action: "Sube la meta desde Editar para seguir midiendo tu avance.",
+        },
+    {
+      id: "audience",
+      icon: "pin",
+      label: "Tu público",
+      stat: `${r.countries[0].value.toFixed(0)}%`,
+      text: `de tus seguidores está en ${r.countries[0].label} y el ${topGender.value.toFixed(0)}% son ${topGender.label.toLowerCase()}.`,
+      action: "Aprovecha fechas locales: empieza a grabar contenido de Día de Muertos en octubre.",
+    },
+  ];
+}
+
+/* ------------------------------------------------------------------ */
+/*  Instagram en vivo vía Composio                                     */
+/* ------------------------------------------------------------------ */
+
+// Una sola llamada al ejecutor de Composio con todas las lecturas en paralelo
+const B = { user: 0, media: 1, stories: 2, totals: 3, prevTotals: 4, byType: 5, follows: 6, series: 7, prevSeries: 8, gender: 9, age: 10, country: 11, city: 12 };
+function instagramBatch(w) {
+  const insights = (args) => ({ tool_slug: "INSTAGRAM_GET_USER_INSIGHTS", arguments: args });
+  const demographics = (breakdown) => insights({ metric: ["follower_demographics"], period: "lifetime", timeframe: "this_month", metric_type: "total_value", breakdown });
+  return [
+    { tool_slug: "INSTAGRAM_GET_USER_INFO", arguments: { ig_user_id: "me", fields: "id,username,name,followers_count,follows_count,media_count" } },
+    { tool_slug: "INSTAGRAM_GET_IG_USER_MEDIA", arguments: { ig_user_id: "me", limit: 25, fields: "id,caption,media_type,media_product_type,permalink,timestamp,like_count,comments_count,view_count" } },
+    { tool_slug: "INSTAGRAM_GET_IG_USER_STORIES", arguments: { fields: "id,media_type,permalink,timestamp,caption" } },
+    insights({ metric: IG_TOTALS, period: "day", metric_type: "total_value", since: w.since, until: w.until }),
+    insights({ metric: IG_TOTALS, period: "day", metric_type: "total_value", since: w.prevSince, until: w.since }),
+    insights({ metric: ["views", "reach"], period: "day", metric_type: "total_value", breakdown: "media_product_type", since: w.since, until: w.until }),
+    insights({ metric: ["follows_and_unfollows"], period: "day", metric_type: "total_value", breakdown: "follow_type", since: w.since, until: w.until }),
+    insights({ metric: ["reach"], period: "day", metric_type: "time_series", since: w.since, until: w.until }),
+    insights({ metric: ["reach"], period: "day", metric_type: "time_series", since: w.prevSince, until: w.since }),
+    demographics("gender"),
+    demographics("age"),
+    demographics("country"),
+    demographics("city"),
+  ];
+}
+
+// El conector puede entregar el JSON ya interpretado (payload) o como texto; esto lo normaliza
+function coerceJson(result) {
+  const p = result?.payload;
+  if (p && typeof p === "object") return p;
+  const text = typeof p === "string" ? p : (result?.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    /* puede traer texto extra al final */
+  }
+  const start = text.indexOf("{");
+  let end = text.lastIndexOf("}");
+  for (let tries = 0; start >= 0 && end > start && tries < 60; tries++) {
+    try {
+      return JSON.parse(text.slice(start, end + 1));
+    } catch {
+      end = text.lastIndexOf("}", end - 1);
+    }
+  }
+  return null;
+}
+
+// Respuesta del ejecutor → arreglo por índice con { ok, data, error }
+function parseBatch(result) {
+  const json = coerceJson(result);
+  const results = json?.data?.results;
+  if (!Array.isArray(results)) {
+    const message = typeof json?.error === "string" ? json.error : json?.error?.message;
+    throw { code: "tool_error", message: message || "Respuesta inesperada del ejecutor." };
+  }
+  const out = [];
+  results.forEach((r, i) => {
+    const idx = Number.isInteger(r?.index) ? r.index : i;
+    const res = r?.response || {};
+    out[idx] = res.successful ? { ok: true, data: res.data } : { ok: false, error: typeof res.error === "string" ? res.error : res.error?.message || "Instagram devolvió un error" };
+  });
+  return out;
+}
+const okData = (entry) => (entry && entry.ok ? entry.data : null);
+const listOf = (data) => (Array.isArray(data?.data) ? data.data : []);
+
+function insightTotals(data) {
+  const map = {};
+  listOf(data).forEach((m) => {
+    const v = toNum(m?.total_value?.value ?? m?.values?.[0]?.value);
+    if (m?.name && isNum(v)) map[m.name] = v;
+  });
+  return map;
+}
+function insightBreakdown(data, metric) {
+  const row = listOf(data).find((m) => !metric || m?.name === metric);
+  const results = row?.total_value?.breakdowns?.[0]?.results;
+  return Array.isArray(results)
+    ? results.map((r) => ({ key: r?.dimension_values?.[0], value: toNum(r?.value) })).filter((r) => r.key != null && isNum(r.value))
+    : [];
+}
+// Serie diaria: Instagram marca cada valor con el final del día (end_time); se omiten los días aún sin procesar
+function insightSeries(data) {
+  const values = Array.isArray(listOf(data)[0]?.values) ? listOf(data)[0].values : [];
+  const cutoff = Date.now() - DAY_MS;
+  return values
+    .map((v) => ({ end: Date.parse(v?.end_time), value: toNum(v?.value) }))
+    .filter((v) => Number.isFinite(v.end) && isNum(v.value) && v.end <= cutoff)
+    .map((v) => {
+      const d = new Date(v.end - 12 * 3600 * 1000);
+      return { ts: utcDay(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()), value: v.value };
+    });
+}
+function shareRows(rows, mapLabel, limit = 5) {
+  const total = sum(rows.map((r) => r.value));
+  if (!total) return null;
+  return [...rows]
+    .sort((a, b) => b.value - a.value)
+    .slice(0, limit)
+    .map((r) => ({ ...mapLabel(r.key), value: (r.value / total) * 100 }));
+}
+
+const AGE_ORDER = ["13-17", "18-24", "25-34", "35-44", "45-54", "55-64", "65+"];
+const GENDER_LABEL = { F: "Mujeres", M: "Hombres", U: "Sin especificar" };
+const PRODUCT_LABEL = { STORY: "historias", REEL: "reels", POST: "publicaciones", CAROUSEL_CONTAINER: "carruseles", AD: "anuncios" };
+
+function mapMediaType(mediaType, productType) {
+  if (productType === "REELS") return "reel";
+  if (mediaType === "CAROUSEL_ALBUM") return "carrusel";
+  if (mediaType === "VIDEO") return "reel";
+  return "foto";
+}
+const captionTitle = (caption, fallback) => {
+  const first = String(caption || "").split("\n")[0].trim();
+  return first ? (first.length > 80 ? `${first.slice(0, 78)}…` : first) : fallback;
+};
+const safeUrl = (u) => (typeof u === "string" && /^https:\/\//.test(u) ? u : null);
+
+function instagramModel(live) {
+  const batch = live.batch;
+  const user = okData(batch[B.user]) || {};
+  const username = user.username || "instagram";
+  const totals = insightTotals(okData(batch[B.totals]));
+  const prev = insightTotals(okData(batch[B.prevTotals]));
+  const byType = insightBreakdown(okData(batch[B.byType]), "views");
+  const followRows = insightBreakdown(okData(batch[B.follows]), "follows_and_unfollows");
+  const cur = insightSeries(okData(batch[B.series]));
+  const before = insightSeries(okData(batch[B.prevSeries]));
+  const followers = toNum(user.followers_count);
+  const mediaCount = toNum(user.media_count);
+
+  const views = totals.views ?? null;
+  const reach = totals.reach ?? null;
+  const engaged = totals.accounts_engaged ?? null;
+  const interactions = totals.total_interactions ?? null;
+  const profileViews = totals.profile_views ?? null;
+  const reachDelta = deltaOrNull(reach, prev.reach);
+  const viewsDelta = deltaOrNull(views, prev.views);
+  const follows = followRows.find((r) => r.key === "FOLLOWER")?.value ?? null;
+  const unfollows = followRows.find((r) => r.key === "NON_FOLLOWER")?.value ?? null;
+  const net = isNum(follows) || isNum(unfollows) ? (follows || 0) - (unfollows || 0) : null;
+  const rate = isNum(engaged) && isNum(reach) && reach > 0 ? (engaged / reach) * 100 : null;
+
+  const rangeLabel = cur.length ? rangeText(cur[0].ts, cur[cur.length - 1].ts) : "Últimos 30 días";
+  const curVals = cur.map((p) => p.value);
+  const hasSeries = curVals.length > 1;
+  const peakIdx = hasSeries ? argmax(curVals) : 0;
+  const tip = cur.map((p) => weekdayDayMonth(p.ts));
+  const both = [...before, ...cur];
+  const bothVals = both.map((p) => p.value);
+  const bothPeak = bothVals.length ? argmax(bothVals) : 0;
+  const bothTip = both.map((p) => weekdayDayMonth(p.ts));
+
+  // Contenido: publicaciones del feed; si no hay, las historias activas
+  const mediaEntry = batch[B.media];
+  const storiesEntry = batch[B.stories];
+  const feed = listOf(okData(mediaEntry)).map((m, i) => {
+    const ts = Date.parse(m.timestamp);
+    const type = mapMediaType(m.media_type, m.media_product_type);
+    return {
+      id: m.id || `m-${i}`,
+      title: captionTitle(m.caption, "Publicación sin texto"),
+      type,
+      icon: TYPE_ICON[type],
+      ts: Number.isFinite(ts) ? ts : 0,
+      dateLabel: Number.isFinite(ts) ? localDayTime(ts) : "",
+      primary: toNum(m.view_count),
+      secondary: { icon: "heart", label: "Me gusta", value: toNum(m.like_count) },
+      url: safeUrl(m.permalink),
+      tone: TONES[i % TONES.length],
+    };
+  });
+  const stories = listOf(okData(storiesEntry)).map((s, i) => {
+    const ts = Date.parse(s.timestamp);
+    const ins = live.storyInsights?.[s.id] || {};
+    return {
+      id: s.id || `s-${i}`,
+      title: captionTitle(s.caption, "Historia sin texto"),
+      type: "historia",
+      icon: s.media_type === "VIDEO" ? "play" : "image",
+      ts: Number.isFinite(ts) ? ts : 0,
+      dateLabel: Number.isFinite(ts) ? localDayTime(ts) : "",
+      primary: toNum(ins.views),
+      secondary: { icon: "users", label: "Alcance", value: toNum(ins.reach) },
+      url: safeUrl(s.permalink),
+      tone: TONES[i % TONES.length],
+    };
+  });
+  const totalTypeViews = sum(byType.map((r) => r.value));
+  const storyShare = totalTypeViews ? ((byType.find((r) => r.key === "STORY")?.value || 0) / totalTypeViews) * 100 : null;
+  const storyNote =
+    mediaCount === 0 && isNum(storyShare) && storyShare > 99
+      ? "No tienes publicaciones en el feed: el 100% de tus vistas de los últimos 30 días viene de historias."
+      : isNum(storyShare)
+        ? `El ${storyShare.toFixed(0)}% de tus vistas de los últimos 30 días viene de historias.`
+        : null;
+
+  let posts;
+  if (feed.length) posts = { state: "ready", subtitle: "Publicaciones recientes", items: feed, note: isNum(mediaCount) ? `${nf.format(mediaCount)} publicaciones en tu perfil.` : null };
+  else if (stories.length) posts = { state: "ready", subtitle: "Historias activas · últimas 24 h", items: stories, note: storyNote };
+  else if (!mediaEntry?.ok && !storiesEntry?.ok) posts = { state: "error", items: [], error: { code: "tool_error", message: mediaEntry?.error || storiesEntry?.error } };
+  else
+    posts = {
+      state: "empty",
+      items: [],
+      message: mediaCount === 0 ? "No tienes publicaciones en el feed ni historias activas. Tus historias aparecen aquí mientras están publicadas (24 h)." : "No se encontraron publicaciones recientes.",
+    };
+
+  // Público
+  const genderRows = insightBreakdown(okData(batch[B.gender]));
+  const genderTotal = sum(genderRows.map((r) => r.value));
+  const gender = genderTotal ? genderRows.map((r) => ({ label: GENDER_LABEL[r.key] || r.key, value: (r.value / genderTotal) * 100 })) : null;
+  const ageRows = insightBreakdown(okData(batch[B.age]));
+  const ageTotal = sum(ageRows.map((r) => r.value));
+  const ages = ageTotal
+    ? AGE_ORDER.map((a) => ({ label: `${a.replace("-", " a ")} años`, value: ((ageRows.find((r) => r.key === a)?.value || 0) / ageTotal) * 100 })).filter((r) => r.value > 0)
+    : null;
+  const countries = shareRows(insightBreakdown(okData(batch[B.country])), (code) => ({ code: String(code).toUpperCase(), label: countryName(String(code).toUpperCase()) }));
+  const cities = shareRows(insightBreakdown(okData(batch[B.city])), (city) => ({ label: String(city) }));
+
+  const secondary = isNum(net)
+    ? {
+        label: "Seguidores netos · 30 días",
+        value: net,
+        signed: true,
+        note: `${formatNumber(followers, false)} seguidores en total · ${nf.format(follows || 0)} nuevos, ${nf.format(unfollows || 0)} se fueron`,
+      }
+    : { label: "Seguidores", value: followers, signed: false, note: "Seguidores de Instagram" };
+
+  const viewsRatio = isNum(views) && isNum(prev.views) && prev.views > 0 ? views / prev.views : null;
+
+  return {
+    id: `ig-${user.id || username}`,
+    name: username,
+    handle: `@${username}`,
+    initial: username.charAt(0).toUpperCase(),
+    source: "live",
+    storedAt: live.storedAt,
+    periodLabel: "Últimos 30 días",
+    rangeLabel,
+    compareSuffix: "vs 30 días previos",
+    hero: {
+      badge: "Instagram",
+      primary: { label: "Visualizaciones · 30 días", value: views, delta: viewsDelta },
+      secondary,
+      minis: [
+        { icon: "radio", label: "Alcance", value: reach, delta: reachDelta, note: "cuentas únicas" },
+        { icon: "heart", label: "Interacciones", value: interactions, delta: deltaOrNull(interactions, prev.total_interactions), note: "likes, respuestas y más" },
+        { icon: "users", label: "Visitas al perfil", value: profileViews, delta: deltaOrNull(profileViews, prev.profile_views), note: "en 30 días" },
+        { icon: "activity", label: "Engagement", value: rate, format: "percent", note: "interactuaron / alcance" },
+      ],
+    },
+    milestone: {
+      title: isNum(viewsRatio) && viewsRatio >= 2 ? `¡Multiplicaste tus vistas ×${viewsRatio.toFixed(1)}!` : isNum(viewsDelta) && viewsDelta > 0 ? "¡Tus vistas van para arriba!" : "Así van tus últimos 30 días",
+      body: `Sumaste ${formatNumber(views, false)} vistas y llegaste a ${formatNumber(reach, false)} cuentas${isNum(reachDelta) ? ` (${signedPct(reachDelta, 0)} vs los 30 días anteriores)` : ""}. ${formatNumber(engaged, false)} cuentas interactuaron contigo y ${formatNumber(profileViews, false)} visitaron tu perfil.`,
+      goal: isNum(followers) ? Math.ceil((followers + 1) / 100) * 100 : null,
+    },
+    seedNotes: [],
+    followers,
+    peak: hasSeries ? { title: "Día con más alcance", sub: `${tip[peakIdx]} · cuentas alcanzadas`, value: curVals[peakIdx] } : null,
+    posts,
+    audience: {
+      subtitle: "Seguidores de Instagram · este mes",
+      state: gender || countries || cities || ages ? "ready" : "empty",
+      gender,
+      locations: { countries, cities, ages },
+    },
+    charts: [
+      {
+        id: "30d",
+        label: "30 días",
+        subtitle: `Cuentas alcanzadas por día · ${rangeLabel}`,
+        values: curVals,
+        tipLabels: tip,
+        axisLabels: cur.map((p, i) => (i % 7 === 0 ? dayMonth(p.ts) : "")),
+        unit: "cuentas alcanzadas",
+        total: reach,
+        totalLabel: "cuentas alcanzadas en 30 días",
+        delta: reachDelta,
+        deltaSuffix: "vs 30 días previos",
+        stats: [
+          { label: "Promedio diario", value: hasSeries ? avg(curVals) : null },
+          { label: "Día récord", value: hasSeries ? curVals[peakIdx] : null, sub: hasSeries ? tip[peakIdx] : "" },
+        ],
+        ariaLabel: `Cuentas alcanzadas por día en @${username}, ${rangeLabel}`,
+      },
+      {
+        id: "60d",
+        label: "60 días",
+        subtitle: "Cuentas alcanzadas por día · últimos 60 días",
+        values: bothVals,
+        tipLabels: bothTip,
+        axisLabels: both.map((p, i) => (i % 14 === 0 ? dayMonth(p.ts) : "")),
+        unit: "cuentas alcanzadas",
+        total: reach,
+        totalLabel: "cuentas alcanzadas en los últimos 30 días",
+        delta: reachDelta,
+        deltaSuffix: "vs 30 días previos",
+        stats: [
+          { label: "30 días previos", value: prev.reach ?? null },
+          { label: "Día récord", value: bothVals.length ? bothVals[bothPeak] : null, sub: bothVals.length ? bothTip[bothPeak] : "" },
+        ],
+        ariaLabel: `Cuentas alcanzadas por día en @${username}, últimos 60 días`,
+      },
+    ],
+    buildInsights: () => instagramInsights({ both, byType, mediaCount, profileViews, follows, countries, cities, ages, rate, engaged, reach }),
+    networks: [{ id: "instagram", label: "Instagram", icon: "camera", state: "ready", text: `${formatNumber(followers, false)} seguidores · ${formatNumber(views)} vistas en 30 días` }],
+  };
+}
+
+function instagramInsights({ both, byType, mediaCount, profileViews, follows, countries, cities, ages, rate, engaged, reach }) {
+  const out = [];
+  const typeTotal = sum(byType.map((r) => r.value));
+  if (typeTotal > 0) {
+    const top = [...byType].sort((a, b) => b.value - a.value)[0];
+    const label = PRODUCT_LABEL[top.key] || String(top.key).toLowerCase();
+    out.push({
+      id: "format",
+      icon: "play",
+      label: "De dónde vienen tus vistas",
+      stat: `${((top.value / typeTotal) * 100).toFixed(0)}%`,
+      text: `de tus vistas de los últimos 30 días vino de ${label}.${mediaCount === 0 ? " No tienes publicaciones en el feed." : ""}`,
+      action: top.key === "STORY" ? "Sube 2 o 3 reels por semana: las historias solo las ven tus seguidores y los reels llegan a gente nueva." : "Mantén ese formato y prueba hooks nuevos con Trial Reels.",
+    });
+  }
+  if (both.length >= 14) {
+    const weekday = weekdayAveragesFrom(both.map((p) => [p.ts, p.value]));
+    const best = argmax(weekday.map((v) => (isNum(v) ? v : -Infinity)));
+    const worst = argmin(weekday.map((v) => (isNum(v) ? v : Infinity)));
+    if (isNum(weekday[best]) && weekday[best] > 0) {
+      const lift = isNum(weekday[worst]) && weekday[worst] > 0 ? `, ${pctChange(weekday[best], weekday[worst]).toFixed(0)}% más que los ${WEEKDAYS[worst]}` : "";
+      out.push({
+        id: "weekday",
+        icon: "calendar",
+        label: "Tu mejor día",
+        stat: capitalize(WEEKDAYS[best]),
+        text: `Los ${WEEKDAYS[best]} llegas en promedio a ${nf.format(Math.round(weekday[best]))} cuentas${lift} (últimos 60 días).`,
+        action: `Publica tu contenido más fuerte los ${WEEKDAYS[best]}.`,
+      });
+    }
+  }
+  if (isNum(profileViews) && profileViews > 0 && isNum(follows)) {
+    out.push({
+      id: "conversion",
+      icon: "target",
+      label: "Visitas que te siguen",
+      stat: `${((follows / profileViews) * 100).toFixed(0)}%`,
+      text: `De ${nf.format(profileViews)} visitas a tu perfil, ${nf.format(follows)} terminaron en seguidores nuevos.`,
+      action: "Afina tu bio y fija historias destacadas que expliquen de qué va tu cuenta.",
+    });
+  } else if (isNum(rate)) {
+    out.push({
+      id: "rate",
+      icon: "users",
+      label: "Tasa de interacción",
+      stat: `${rate.toFixed(1)}%`,
+      text: `De cada 100 cuentas que te vieron, ${Math.round(rate)} interactuaron (${nf.format(engaged)} de ${nf.format(reach)}).`,
+      action: "Usa stickers de pregunta y encuestas para subirla.",
+    });
+  }
+  if (countries && countries.length) {
+    const topCities = cities ? cities.slice(0, 2) : [];
+    const citiesShare = sum(topCities.map((c) => c.value));
+    const young = ages ? sum(ages.filter((a) => /^(18|25)/.test(a.label)).map((a) => a.value)) : null;
+    out.push({
+      id: "audience",
+      icon: "pin",
+      label: "Tu público",
+      stat: `${countries[0].value.toFixed(0)}%`,
+      text: `de tus seguidores está en ${countries[0].label}${topCities.length ? `; el ${citiesShare.toFixed(0)}% en ${topCities.map((c) => c.label.split(",")[0]).join(" y ")}` : ""}${isNum(young) && young > 0 ? `, y el ${young.toFixed(0)}% tiene entre 18 y 34 años` : ""}.`,
+      action: topCities.length ? `Usa referencias locales de ${topCities[0].label.split(",")[0]} y fechas como Día de Muertos.` : "Aprovecha fechas locales como Día de Muertos.",
+    });
+  }
+  return out.slice(0, 4);
+}
+
+/* ------------------------------------------------------------------ */
 /*  Hooks                                                              */
 /* ------------------------------------------------------------------ */
 
 function useAnimatedNumber(target, duration = 650) {
-  const [value, setValue] = useState(target);
-  const fromRef = useRef(target);
+  const safe = isNum(target) ? target : 0;
+  const [value, setValue] = useState(safe);
+  const fromRef = useRef(safe);
   useEffect(() => {
     const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     const from = fromRef.current;
-    if (reduce || from === target) {
-      fromRef.current = target;
-      setValue(target);
+    if (reduce || from === safe) {
+      fromRef.current = safe;
+      setValue(safe);
       return undefined;
     }
     let raf;
     const start = performance.now();
     const tick = (now) => {
       const p = Math.min(1, (now - start) / duration);
-      const v = from + (target - from) * (1 - Math.pow(1 - p, 3));
+      const v = from + (safe - from) * (1 - Math.pow(1 - p, 3));
       fromRef.current = v;
       setValue(v);
       if (p < 1) raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [target, duration]);
-  return value;
+  }, [safe, duration]);
+  return isNum(target) ? value : null;
 }
 
 function useElementSize(ref) {
@@ -347,6 +1013,136 @@ function useElementSize(ref) {
     return () => ro.disconnect();
   }, [ref]);
   return size;
+}
+
+// Resuelve la capability `mcp`. Fuera de claude.ai no existe y se usan los datos de ejemplo.
+function useMcpCapability() {
+  const available = typeof window !== "undefined" && window.claude && typeof window.claude.use === "function";
+  const [state, setState] = useState(available ? { status: "connecting", api: null } : { status: "absent", api: null });
+  useEffect(() => {
+    if (!available) return undefined;
+    let alive = true;
+    window.claude.use("mcp").then(
+      (api) => alive && setState(api ? { status: "ready", api } : { status: "absent", api: null }),
+      () => alive && setState({ status: "absent", api: null })
+    );
+    return () => {
+      alive = false;
+    };
+  }, [available]);
+  return state;
+}
+
+// Lee Instagram por Composio: una llamada con todas las métricas y otra con las métricas de cada historia activa
+function useInstagramLive(api) {
+  const [state, setState] = useState({ status: api ? "loading" : "idle" });
+  const [nonce, setNonce] = useState(0);
+  const forceRef = useRef(false);
+
+  useEffect(() => {
+    if (!api) return undefined;
+    let alive = true;
+    const force = forceRef.current;
+    forceRef.current = false;
+    setState((s) => (s.batch ? { ...s, refreshing: true } : { status: "loading" }));
+    const options = { cache: { ...CACHE_OPTIONS, ...(force ? { refresh: true } : {}) } };
+    const run = (tools) => api.callTool(CP_SERVER, CP_TOOL, { tools, sync_response_to_workbench: false, thought: "Leer analíticas de Instagram para el dashboard" }, options);
+
+    (async () => {
+      try {
+        const result = await run(instagramBatch(instagramWindows()));
+        const batch = parseBatch(result);
+        const stories = listOf(okData(batch[B.stories])).filter((s) => s && s.id).slice(0, 10);
+        const storyInsights = {};
+        if (stories.length) {
+          try {
+            const res2 = await run(stories.map((s) => ({ tool_slug: "INSTAGRAM_GET_IG_MEDIA_INSIGHTS", arguments: { ig_media_id: s.id, metric: ["views", "reach", "total_interactions"] } })));
+            const b2 = parseBatch(res2);
+            stories.forEach((s, i) => {
+              storyInsights[s.id] = insightTotals(okData(b2[i]));
+            });
+          } catch {
+            /* sin métricas por historia: se muestran sin números */
+          }
+        }
+        if (alive) setState({ status: "ready", batch, storyInsights, storedAt: result?.cache?.storedAt ?? Date.now() });
+      } catch (err) {
+        const error = err && err.code ? err : { code: "upstream_error", message: String(err?.message || "") };
+        if (alive) setState((s) => (s.batch && !RETRACT_CODES.has(error.code) ? { ...s, refreshing: false, staleError: error } : { status: "error", error }));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [api, nonce]);
+
+  const refresh = useCallback(() => {
+    forceRef.current = true;
+    setNonce((n) => n + 1);
+  }, []);
+  return [state, refresh];
+}
+
+// Mantiene al día el resultado de una herramienta de Metricool (repite caché y refresca solo)
+function useMetricoolWatch(api, tool, input) {
+  const key = api && input ? JSON.stringify(input) : null;
+  const [state, setState] = useState({ status: key ? "loading" : "idle" });
+  useEffect(() => {
+    if (!key) {
+      setState({ status: "idle" });
+      return undefined;
+    }
+    setState((s) => (s.data !== undefined ? s : { status: "loading" }));
+    const unsubscribe = api.watchTool(
+      MC_SERVER,
+      tool,
+      JSON.parse(key),
+      (ev) => {
+        if (ev.type === "data") {
+          setState({ status: "ready", data: ev.result.payload, storedAt: ev.result.cache?.storedAt ?? Date.now() });
+        } else {
+          const error = ev.error || { code: "upstream_error", message: "" };
+          setState((s) => (RETRACT_CODES.has(error.code) || s.data === undefined ? { status: "error", error } : { ...s, staleError: error }));
+        }
+      },
+      { cache: CACHE_OPTIONS }
+    );
+    return unsubscribe;
+  }, [api, tool, key]);
+  return state;
+}
+
+// TikTok desde Metricool; solo consulta cuando `enabled` (el visitante lo pidió o ya dio permiso)
+function useTikTok(api, enabled) {
+  const brands = useMetricoolWatch(api, MC_BRANDS, api && enabled ? {} : null);
+  const list = Array.isArray(brands.data?.data) ? brands.data.data : [];
+  const brand = list.find((b) => b && b.networksData?.tiktokData) || null;
+  const timeZone = brand?.timezone || "America/Mexico_City";
+  const window30 = useMemo(() => (brand ? metricoolWindow(timeZone) : null), [brand?.id, timeZone]); // eslint-disable-line react-hooks/exhaustive-deps
+  const tk = useMetricoolWatch(api, MC_DATA, brand && window30 ? { brandId: String(brand.id), from: window30.from, to: window30.to, metrics: TK_EVOLUTION } : null);
+
+  if (!enabled) return { state: "idle" };
+  if (brands.status === "error") return { state: "error", error: brands.error };
+  if (brands.status !== "ready") return { state: "loading" };
+  if (!brand) return { state: "none" };
+  if (tk.status === "error") return { state: "error", error: tk.error };
+  if (tk.status !== "ready") return { state: "loading" };
+
+  const byDay = new Map();
+  (Array.isArray(tk.data?.rows) ? tk.data.rows : []).forEach((row) => {
+    if (!Array.isArray(row) || row[TK_EVOLUTION.length] == null) return;
+    const values = {};
+    TK_EVOLUTION.forEach((m, i) => {
+      values[m] = toNum(row[i]);
+    });
+    byDay.set(String(row[TK_EVOLUTION.length]), values);
+  });
+  const series = (metric) => window30.days.map((ts) => byDay.get(tsToKey(ts))?.[metric] ?? null);
+  const latest = [...byDay.keys()].sort().reverse().map((k) => byDay.get(k).TKEV07).find(isNum) ?? null;
+  const views = sumNullable(series("TKEV02"));
+  const interactions = sumNullable(series("TKEV06"));
+  const hasData = [latest, views, interactions].some((v) => isNum(v) && v > 0);
+  return hasData ? { state: "ready", followers: latest, views, interactions } : { state: "syncing" };
 }
 
 /* ------------------------------------------------------------------ */
@@ -380,6 +1176,7 @@ const ICONS = {
   bulb: (<><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5" /><path d="M9 18h6" /><path d="M10 22h4" /></>),
   send: (<><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z" /><path d="m21.854 2.147-10.94 10.939" /></>),
   repeat: (<><path d="m17 2 4 4-4 4" /><path d="M3 11v-1a4 4 0 0 1 4-4h14" /><path d="m7 22-4-4 4-4" /><path d="M21 13v1a4 4 0 0 1-4 4H3" /></>),
+  refresh: (<><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" /><path d="M8 16H3v5" /></>),
   search: (<><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></>),
   flask: (<><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2" /><path d="M8.5 2h7" /><path d="M7 16h10" /></>),
   calendar: (<><rect width="18" height="18" x="3" y="4" rx="2" /><path d="M16 2v4" /><path d="M8 2v4" /><path d="M3 10h18" /></>),
@@ -389,7 +1186,7 @@ const ICONS = {
   message: <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" />,
   megaphone: (<><path d="m3 11 18-5v12L3 14v-3z" /><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6" /></>),
   bookmark: <path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z" />,
-  external: (<><path d="M15 3h6v6" /><path d="M10 14 21 3" /><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /></>),
+  alert: (<><circle cx="12" cy="12" r="10" /><path d="M12 8v4" /><path d="M12 16h.01" /></>),
 };
 
 function Icon({ name, className = "h-4 w-4", strokeWidth = 1.75 }) {
@@ -419,6 +1216,13 @@ const CHIP_BTN = `bg-[color:var(--card)] text-[color:var(--ink)] hover:bg-[color
 const INPUT =
   "mt-1.5 w-full rounded-2xl border border-transparent bg-[color:var(--fill)] px-3.5 py-2.5 text-[15px] text-[color:var(--ink)] outline-none transition placeholder:text-[color:var(--faint)] focus:border-[color:var(--dash)] focus:bg-[color:var(--card)]";
 
+function formatStat(value, format, compact) {
+  if (!isNum(value)) return "—";
+  if (format === "percent") return `${value.toFixed(1)}%`;
+  if (format === "signedPercent") return signedPct(value);
+  return formatNumber(value, compact);
+}
+
 /* ------------------------------------------------------------------ */
 /*  Piezas base                                                        */
 /* ------------------------------------------------------------------ */
@@ -445,6 +1249,18 @@ function IconBadge({ icon }) {
     <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${FILL} ${INK2}`}>
       <Icon name={icon} className="h-[17px] w-[17px]" />
     </span>
+  );
+}
+
+function EmptyState({ icon = "alert", title, children }) {
+  return (
+    <div className={`flex flex-1 flex-col items-center justify-center gap-2 rounded-[22px] border border-dashed px-5 py-8 text-center ${DASH}`}>
+      <span className={`grid h-10 w-10 place-items-center rounded-full ${FILL} ${INK2}`}>
+        <Icon name={icon} className="h-[18px] w-[18px]" />
+      </span>
+      <p className="text-sm font-semibold">{title}</p>
+      {children && <p className={`max-w-[34ch] text-[13px] leading-relaxed ${MUTED}`}>{children}</p>}
+    </div>
   );
 }
 
@@ -493,6 +1309,7 @@ function Switch({ checked, onChange, id, label }) {
 }
 
 function DeltaPill({ value, suffix, onHero = false, className = "" }) {
+  if (!isNum(value)) return null;
   const up = value >= 0;
   return (
     <div className={`inline-flex items-center gap-1.5 ${className}`}>
@@ -502,8 +1319,7 @@ function DeltaPill({ value, suffix, onHero = false, className = "" }) {
         }`}
       >
         <Icon name={up ? "arrowUp" : "arrowDown"} className="h-3 w-3" strokeWidth={2.25} />
-        {up ? "+" : "−"}
-        {Math.abs(value).toFixed(1)}%
+        {signedPct(value)}
       </span>
       {suffix && <span className={`text-xs ${onHero ? "text-[color:var(--hero-faint)]" : MUTED}`}>{suffix}</span>}
     </div>
@@ -519,10 +1335,10 @@ function ProgressBar({ value, className = "" }) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Barra superior                                                     */
+/*  Barra superior y estado de la conexión                             */
 /* ------------------------------------------------------------------ */
 
-function SettingsMenu({ prefs, setPrefs }) {
+function SettingsMenu({ prefs, setPrefs, compareLabel }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -571,8 +1387,8 @@ function SettingsMenu({ prefs, setPrefs }) {
           </div>
           <div className="mt-4 flex items-center justify-between gap-3 border-t border-[color:var(--sep)] pt-4">
             <label htmlFor="pref-compare" className="min-w-0 cursor-pointer">
-              <span className="block text-sm font-medium">Comparar con {PERIOD.prevMonth}</span>
-              <span className={`block text-xs ${MUTED}`}>Muestra el cambio vs el mes anterior</span>
+              <span className="block text-sm font-medium">Comparar con el periodo anterior</span>
+              <span className={`block text-xs ${MUTED}`}>Muestra el cambio {compareLabel}</span>
             </label>
             <Switch id="pref-compare" checked={prefs.compare} onChange={(v) => setPrefs((p) => ({ ...p, compare: v }))} />
           </div>
@@ -582,24 +1398,27 @@ function SettingsMenu({ prefs, setPrefs }) {
   );
 }
 
-function TopBar({ accountId, onSelect, editing, onToggleEdit, prefs, setPrefs, theme, onToggleTheme }) {
+function TopBar({ accounts, accountId, onSelect, editing, onToggleEdit, prefs, setPrefs, theme, onToggleTheme, compareLabel, showSampleTags }) {
   const dark = theme === "dark";
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <Segmented
-        label="Cuenta de Instagram"
-        value={accountId}
-        onChange={onSelect}
-        options={ACCOUNTS.map((a) => ({
-          value: a.id,
-          render: (active) => (
-            <>
-              <span className={`grid h-6 w-6 place-items-center rounded-full text-[11px] font-semibold transition-colors ${active ? ACCENT : `${CARD_BG} ${INK2}`}`}>{a.initial}</span>
-              {a.name}
-            </>
-          ),
-        }))}
-      />
+      <div className="-mx-1 max-w-full overflow-x-auto px-1 py-1">
+        <Segmented
+          label="Cuenta"
+          value={accountId}
+          onChange={onSelect}
+          options={accounts.map((a) => ({
+            value: a.id,
+            render: (active) => (
+              <>
+                <span className={`grid h-6 w-6 place-items-center rounded-full text-[11px] font-semibold transition-colors ${active ? ACCENT : `${CARD_BG} ${INK2}`}`}>{a.initial}</span>
+                {a.name}
+                {showSampleTags && a.source === "sample" && <span className={`rounded-full border border-dashed px-1.5 text-[10px] font-medium ${DASH} ${MUTED}`}>ejemplo</span>}
+              </>
+            ),
+          }))}
+        />
+      </div>
       <div className="flex items-center gap-2">
         <button
           type="button"
@@ -619,8 +1438,90 @@ function TopBar({ accountId, onSelect, editing, onToggleEdit, prefs, setPrefs, t
           <Icon name={editing ? "check" : "pencil"} className="h-[15px] w-[15px]" />
           {editing ? "Listo" : "Editar"}
         </button>
-        <SettingsMenu prefs={prefs} setPrefs={setPrefs} />
+        <SettingsMenu prefs={prefs} setPrefs={setPrefs} compareLabel={compareLabel} />
       </div>
+    </div>
+  );
+}
+
+function SourceChip({ kind }) {
+  if (kind === "live") {
+    return (
+      <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${ACCENT}`}>
+        <span className="ig-pulse h-1.5 w-1.5 rounded-full bg-[color:var(--on-accent)]" />
+        En vivo · Instagram
+      </span>
+    );
+  }
+  return (
+    <span className={`rounded-full border border-dashed px-2.5 py-0.5 text-xs ${DASH} ${MUTED}`}>{kind === "connecting" ? "Conectando con Instagram…" : "Datos de ejemplo"}</span>
+  );
+}
+
+function Banner({ icon = "alert", children, action }) {
+  return (
+    <div className={`ig-fade ig-shadow mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl px-4 py-3 text-sm ${CARD_BG} ${INK2}`}>
+      <span className="flex min-w-0 items-start gap-2">
+        <Icon name={icon} className={`mt-0.5 h-4 w-4 shrink-0 ${INK}`} />
+        <span className="min-w-0">{children}</span>
+      </span>
+      {action}
+    </div>
+  );
+}
+
+function NetworkChip({ icon, label, active, children }) {
+  return (
+    <span className={`ig-shadow inline-flex max-w-full items-center gap-2 rounded-full py-1.5 pl-1.5 pr-3.5 text-[13px] ${CARD_BG}`}>
+      <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full ${active ? ACCENT : `${FILL} ${INK2}`}`}>
+        <Icon name={icon} className="h-3.5 w-3.5" />
+      </span>
+      <span className="font-semibold">{label}</span>
+      {children}
+    </span>
+  );
+}
+
+function LiveStrip({ acc, tiktok, onConnectTikTok, onRefresh, refreshing }) {
+  const time = acc.storedAt ? new Date(acc.storedAt).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }) : null;
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-2">
+      {acc.networks.map((n) => (
+        <NetworkChip key={n.id} icon={n.icon} label={n.label} active={n.state === "ready"}>
+          <span className={`min-w-0 truncate ${INK2}`}>{n.text}</span>
+        </NetworkChip>
+      ))}
+      {tiktok.state !== "none" && (
+        <NetworkChip icon="music" label="TikTok" active={tiktok.state === "ready"}>
+          {tiktok.state === "idle" ? (
+            <button type="button" onClick={onConnectTikTok} className={`rounded-full text-[13px] font-medium underline underline-offset-2 ${INK2} hover:text-[color:var(--ink)] ${FOCUS}`}>
+              Cargar desde Metricool
+            </button>
+          ) : (
+            <span className={`min-w-0 truncate ${tiktok.state === "ready" ? INK2 : MUTED}`}>
+              {tiktok.state === "ready"
+                ? `${formatNumber(tiktok.followers, false)} seguidores · ${formatNumber(tiktok.views)} vistas en 30 días`
+                : tiktok.state === "syncing"
+                  ? "Metricool todavía está sincronizando tus datos"
+                  : tiktok.state === "error"
+                    ? errorCopy(tiktok.error, "Metricool")
+                    : "Cargando…"}
+            </span>
+          )}
+        </NetworkChip>
+      )}
+      <span className={`ml-auto flex items-center gap-2 text-xs ${MUTED}`}>
+        {time && <span>Actualizado a las {time}</span>}
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={refreshing}
+          className={`inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition disabled:opacity-50 ${FOCUS} ${CHIP_BTN}`}
+        >
+          <Icon name="refresh" className={`h-3.5 w-3.5 ${refreshing ? "ig-spin" : ""}`} />
+          {refreshing ? "Actualizando…" : "Actualizar"}
+        </button>
+      </span>
     </div>
   );
 }
@@ -637,11 +1538,10 @@ function MiniStat({ icon, label, value, delta, note }) {
         <span className="truncate text-xs font-medium">{label}</span>
       </div>
       <p className="mt-2 text-xl font-semibold tracking-[-0.02em] text-[color:var(--hero-ink)]">{value}</p>
-      {delta != null ? (
+      {isNum(delta) ? (
         <p className="mt-0.5 flex items-center gap-0.5 text-xs tabular-nums text-[color:var(--hero-sub)]">
           <Icon name={delta >= 0 ? "arrowUp" : "arrowDown"} className="h-3 w-3" strokeWidth={2.25} />
-          {delta >= 0 ? "+" : "−"}
-          {Math.abs(delta).toFixed(1)}%
+          {signedPct(delta)}
         </p>
       ) : (
         <p className="mt-0.5 truncate text-xs text-[color:var(--hero-faint)]">{note}</p>
@@ -651,39 +1551,37 @@ function MiniStat({ icon, label, value, delta, note }) {
 }
 
 function HeroCard({ acc, prefs }) {
-  const net = acc.followersEnd - acc.followersStart;
-  const views = useAnimatedNumber(acc.views);
-  const netAnim = useAnimatedNumber(net);
-  const growth = (net / acc.followersStart) * 100;
-  const rate = (acc.interactions / acc.views) * 100;
-  const viewsText = formatNumber(views, prefs.compact);
+  const { primary, secondary, minis } = acc.hero;
+  const primaryAnim = useAnimatedNumber(primary.value);
+  const secondaryAnim = useAnimatedNumber(secondary.value);
+  const primaryText = formatNumber(primaryAnim, prefs.compact);
+  const secondaryText = isNum(secondaryAnim) ? `${secondary.signed ? (secondaryAnim >= 0 ? "+" : "−") : ""}${nf.format(Math.abs(Math.round(secondaryAnim)))}` : "—";
 
   return (
     <Card hero>
       <CardHeader
         hero
         title="Resumen"
-        subtitle={`${PERIOD.label} · ${acc.handle}`}
-        right={<span className="rounded-full bg-[color:var(--hero-chip)] px-2.5 py-1 text-xs font-medium text-[color:var(--hero-sub)]">Mensual</span>}
+        subtitle={`${acc.periodLabel} · ${acc.handle}`}
+        right={<span className="rounded-full bg-[color:var(--hero-chip)] px-2.5 py-1 text-xs font-medium text-[color:var(--hero-sub)]">{acc.hero.badge}</span>}
       />
 
       <div className="mt-8">
-        <p className="text-[13px] font-medium text-[color:var(--hero-sub)]">Visualizaciones totales</p>
-        <p className={`mt-1.5 font-bold leading-none tracking-[-0.04em] ${viewsText.length > 7 ? "text-[2.6rem]" : "text-[3.5rem]"}`}>{viewsText}</p>
-        {prefs.compare && <DeltaPill onHero className="mt-3" value={pctChange(acc.views, acc.viewsPrev)} suffix={`vs ${PERIOD.prevMonth}`} />}
+        <p className="text-[13px] font-medium text-[color:var(--hero-sub)]">{primary.label}</p>
+        <p className={`mt-1.5 font-bold leading-none tracking-[-0.04em] ${primaryText.length > 7 ? "text-[2.6rem]" : "text-[3.5rem]"}`}>{primaryText}</p>
+        {prefs.compare && <DeltaPill onHero className="mt-3" value={primary.delta} suffix={acc.compareSuffix} />}
       </div>
 
       <div className="mt-7">
-        <p className="text-[13px] font-medium text-[color:var(--hero-sub)]">Seguidores netos del mes</p>
-        <p className="mt-1.5 text-[2.6rem] font-bold leading-none tracking-[-0.04em]">+{nf.format(Math.round(netAnim))}</p>
-        <p className="mt-2.5 text-[13px] text-[color:var(--hero-faint)]">{nf.format(acc.followersEnd)} seguidores en total</p>
+        <p className="text-[13px] font-medium text-[color:var(--hero-sub)]">{secondary.label}</p>
+        <p className="mt-1.5 text-[2.6rem] font-bold leading-none tracking-[-0.04em]">{secondaryText}</p>
+        {secondary.note && <p className="mt-2.5 text-[13px] leading-snug text-[color:var(--hero-faint)]">{secondary.note}</p>}
       </div>
 
       <div className="mt-auto grid grid-cols-2 gap-2.5 pt-8">
-        <MiniStat icon="heart" label="Interacciones" value={formatNumber(acc.interactions, prefs.compact)} delta={prefs.compare ? pctChange(acc.interactions, acc.interactionsPrev) : null} note="likes, comentarios y más" />
-        <MiniStat icon="trending" label="Crecimiento" value={`+${growth.toFixed(1)}%`} note="de seguidores" />
-        <MiniStat icon="radio" label="Alcance" value={formatNumber(acc.reach, prefs.compact)} delta={prefs.compare ? pctChange(acc.reach, acc.reachPrev) : null} note="cuentas únicas" />
-        <MiniStat icon="activity" label="Engagement" value={`${rate.toFixed(1)}%`} note="interacciones / vistas" />
+        {minis.map((m) => (
+          <MiniStat key={m.label} icon={m.icon} label={m.label} value={formatStat(m.value, m.format, prefs.compact)} delta={prefs.compare ? m.delta : null} note={m.note} />
+        ))}
       </div>
     </Card>
   );
@@ -720,10 +1618,10 @@ function MilestonesCard({ acc, editing, milestone, onMilestoneChange, onMileston
     setDraft("");
   }, [acc.id]);
 
-  const peak = argmax(acc.daily);
-  const goal = Math.max(1, Number(milestone.goal) || acc.milestone.goal);
-  const progress = (acc.followersEnd / goal) * 100;
-  const remaining = Math.max(0, goal - acc.followersEnd);
+  const goal = Number(milestone.goal) || acc.milestone.goal;
+  const hasGoal = isNum(acc.followers) && isNum(goal) && goal > 0;
+  const progress = hasGoal ? (acc.followers / goal) * 100 : 0;
+  const remaining = hasGoal ? Math.max(0, goal - acc.followers) : 0;
 
   const save = () => {
     const text = draft.trim();
@@ -739,7 +1637,7 @@ function MilestonesCard({ acc, editing, milestone, onMilestoneChange, onMileston
 
   return (
     <Card>
-      <CardHeader title="Hitos del Mes" subtitle={PERIOD.label} right={<IconBadge icon="flag" />} />
+      <CardHeader title="Hitos del Mes" subtitle={acc.periodLabel} right={<IconBadge icon="flag" />} />
 
       <div key={acc.id} className="ig-fade">
         {editing ? (
@@ -754,7 +1652,7 @@ function MilestonesCard({ acc, editing, milestone, onMilestoneChange, onMileston
             </label>
             <label className="block" htmlFor={`ms-goal-${acc.id}`}>
               <span className={`text-xs font-medium ${MUTED}`}>Meta de seguidores</span>
-              <input id={`ms-goal-${acc.id}`} type="number" min="1" step="100" inputMode="numeric" className={`${INPUT} tabular-nums`} value={milestone.goal} onChange={(e) => onMilestoneChange({ goal: e.target.value })} />
+              <input id={`ms-goal-${acc.id}`} type="number" min="1" step="100" inputMode="numeric" className={`${INPUT} tabular-nums`} value={milestone.goal ?? ""} onChange={(e) => onMilestoneChange({ goal: e.target.value })} />
             </label>
             <button type="button" onClick={onMilestoneReset} className={`rounded-full px-1 text-xs font-medium underline-offset-2 hover:underline ${MUTED} hover:text-[color:var(--ink)] ${FOCUS}`}>
               Restablecer texto original
@@ -763,16 +1661,20 @@ function MilestonesCard({ acc, editing, milestone, onMilestoneChange, onMileston
         ) : (
           <>
             <h3 className="mt-5 text-balance text-[22px] font-semibold leading-[1.2] tracking-[-0.02em]">{milestone.title}</h3>
-            <p className={`mt-2 text-[15px] leading-relaxed ${INK2}`}>{milestone.body}</p>
+            {milestone.body && <p className={`mt-2 text-[15px] leading-relaxed ${INK2}`}>{milestone.body}</p>}
           </>
         )}
 
-        <ul className="mt-4 divide-y divide-[color:var(--sep)]">
-          <ListRow icon="zap" title="Día récord" subtitle={`${dayLabel(peak + 1)} · interacciones`} right={nf.format(acc.daily[peak])} />
-          <ListRow icon="target" title="Meta de seguidores" subtitle={remaining > 0 ? `Faltan ${nf.format(remaining)} para ${nf.format(goal)}` : `Meta de ${nf.format(goal)} cumplida`} right={`${Math.min(100, progress).toFixed(0)}%`}>
-            <ProgressBar value={progress} className="mt-2" />
-          </ListRow>
-        </ul>
+        {(acc.peak || hasGoal) && (
+          <ul className="mt-4 divide-y divide-[color:var(--sep)]">
+            {acc.peak && <ListRow icon="zap" title={acc.peak.title} subtitle={acc.peak.sub} right={nf.format(acc.peak.value)} />}
+            {hasGoal && (
+              <ListRow icon="target" title="Meta de seguidores" subtitle={remaining > 0 ? `Faltan ${nf.format(remaining)} para ${nf.format(goal)}` : `Meta de ${nf.format(goal)} cumplida`} right={`${Math.min(100, progress).toFixed(0)}%`}>
+                <ProgressBar value={progress} className="mt-2" />
+              </ListRow>
+            )}
+          </ul>
+        )}
       </div>
 
       {notes.length > 0 && (
@@ -860,61 +1762,87 @@ function MilestonesCard({ acc, editing, milestone, onMilestoneChange, onMileston
 
 function ContentCard({ acc, prefs }) {
   const [sort, setSort] = useState("recent");
-  const posts = useMemo(() => [...acc.posts].sort((a, b) => (sort === "recent" ? b.day - a.day : b.views - a.views)), [acc, sort]);
-  const share = (sum(acc.posts.map((p) => p.views)) / acc.views) * 100;
+  const { posts } = acc;
+  const items = useMemo(
+    () => [...posts.items].sort((a, b) => (sort === "recent" ? b.ts - a.ts : (b.primary ?? -1) - (a.primary ?? -1))).slice(0, 4),
+    [posts.items, sort]
+  );
 
   return (
     <Card>
       <CardHeader
         title="Rendimiento de contenido"
-        subtitle="Publicaciones recientes"
+        subtitle={posts.subtitle || "Publicaciones recientes"}
         right={
-          <Segmented
-            small
-            label="Ordenar publicaciones"
-            value={sort}
-            onChange={setSort}
-            options={[
-              { value: "recent", label: "Recientes" },
-              { value: "top", label: "Más vistas" },
-            ]}
-          />
+          posts.state === "ready" && posts.items.length > 1 ? (
+            <Segmented
+              small
+              label="Ordenar contenido"
+              value={sort}
+              onChange={setSort}
+              options={[
+                { value: "recent", label: "Recientes" },
+                { value: "top", label: "Más vistas" },
+              ]}
+            />
+          ) : null
         }
       />
 
-      <ul key={`${acc.id}-${sort}`} className="ig-fade mt-3 divide-y divide-[color:var(--sep)]">
-        {posts.map((p) => (
-          <li key={p.id} className="flex items-center gap-3.5 py-3.5">
-            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-[14px]" style={{ background: p.tone }} aria-hidden="true">
-              <Icon name={TYPE_ICON[p.type]} className="h-[18px] w-[18px] text-white/90" />
+      {posts.state === "ready" && (
+        <>
+          <ul key={`${acc.id}-${sort}`} className="ig-fade mt-3 divide-y divide-[color:var(--sep)]">
+            {items.map((p) => (
+              <li key={p.id} className="flex items-center gap-3.5 py-3.5">
+                <div className="grid h-12 w-12 shrink-0 place-items-center rounded-[14px]" style={{ background: p.tone }} aria-hidden="true">
+                  <Icon name={p.icon} className="h-[18px] w-[18px] text-white/90" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  {p.url ? (
+                    <a href={p.url} target="_blank" rel="noopener noreferrer" className={`line-clamp-2 break-words rounded text-[15px] font-medium leading-snug underline-offset-2 hover:underline ${FOCUS}`}>
+                      {p.title}
+                    </a>
+                  ) : (
+                    <p className="line-clamp-2 break-words text-[15px] font-medium leading-snug">{p.title}</p>
+                  )}
+                  <p className={`mt-0.5 text-[13px] ${MUTED}`}>
+                    {TYPE_LABEL[p.type]}
+                    {p.dateLabel && ` · ${p.dateLabel}`}
+                  </p>
+                </div>
+                <div className="shrink-0 text-right">
+                  <p className="flex items-center justify-end gap-1 text-[15px] font-semibold tabular-nums">
+                    <Icon name="eye" className={`h-3.5 w-3.5 ${FAINT}`} />
+                    <span className="sr-only">Vistas:</span>
+                    {formatNumber(p.primary, prefs.compact)}
+                  </p>
+                  <p className={`mt-0.5 flex items-center justify-end gap-1 text-[13px] tabular-nums ${MUTED}`}>
+                    <Icon name={p.secondary.icon} className={`h-3.5 w-3.5 ${FAINT}`} />
+                    <span className="sr-only">{p.secondary.label}:</span>
+                    {formatNumber(p.secondary.value, prefs.compact)}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ul>
+          {posts.note && (
+            <div className="mt-auto pt-3">
+              <p className={`rounded-2xl px-4 py-3 text-[13px] leading-snug ${FILL2} ${INK2}`}>{posts.note}</p>
             </div>
-            <div className="min-w-0 flex-1">
-              <p className="line-clamp-2 break-words text-[15px] font-medium leading-snug">{p.title}</p>
-              <p className={`mt-0.5 text-[13px] ${MUTED}`}>
-                {TYPE_LABEL[p.type]} · {p.day} {PERIOD.short}
-              </p>
-            </div>
-            <div className="shrink-0 text-right">
-              <p className="flex items-center justify-end gap-1 text-[15px] font-semibold tabular-nums">
-                <Icon name="eye" className={`h-3.5 w-3.5 ${FAINT}`} />
-                <span className="sr-only">Visualizaciones:</span>
-                {formatNumber(p.views, prefs.compact)}
-              </p>
-              <p className={`mt-0.5 flex items-center justify-end gap-1 text-[13px] tabular-nums ${MUTED}`}>
-                <Icon name="heart" className={`h-3.5 w-3.5 ${FAINT}`} />
-                <span className="sr-only">Me gusta:</span>
-                {formatNumber(p.likes, prefs.compact)}
-              </p>
-            </div>
-          </li>
-        ))}
-      </ul>
+          )}
+        </>
+      )}
 
-      <div className="mt-auto pt-3">
-        <p className={`rounded-2xl px-4 py-3 text-[13px] leading-snug ${FILL2} ${INK2}`}>
-          Estas 4 publicaciones generaron el <span className={`font-semibold ${INK}`}>{share.toFixed(0)}%</span> de tus visualizaciones de {PERIOD.month}.
-        </p>
-      </div>
+      {posts.state === "empty" && (
+        <div className="mt-4 flex flex-1 flex-col">
+          <EmptyState icon="image" title="Nada publicado por ahora">{posts.message}</EmptyState>
+        </div>
+      )}
+      {posts.state === "error" && (
+        <div className="mt-4 flex flex-1 flex-col">
+          <EmptyState icon="alert" title="No se pudo leer tu contenido">{errorCopy(posts.error)}</EmptyState>
+        </div>
+      )}
     </Card>
   );
 }
@@ -923,65 +1851,77 @@ function ContentCard({ acc, prefs }) {
 /*  Tarjeta 4 · Público                                                */
 /* ------------------------------------------------------------------ */
 
+const GENDER_TONES = ["bg-[color:var(--accent)]", "bg-[color:var(--bar-2)]", "bg-[color:var(--dash)]"];
+const LOCATION_LABELS = { countries: "Países", cities: "Ciudades", ages: "Edades" };
+
 function AudienceCard({ acc }) {
+  const { audience } = acc;
+  const available = Object.keys(LOCATION_LABELS).filter((k) => audience.locations?.[k]?.length);
   const [view, setView] = useState("countries");
-  const gender = [...acc.gender].sort((a, b) => b.value - a.value);
-  const rows = view === "countries" ? acc.countries : acc.cities;
+  const current = available.includes(view) ? view : available[0];
+  const rows = current ? audience.locations[current] : [];
+  const gender = audience.gender ? [...audience.gender].sort((a, b) => b.value - a.value) : null;
 
   return (
     <Card>
-      <CardHeader title="Público" subtitle={`Seguidores al 31 ${PERIOD.short} ${PERIOD.year}`} right={<IconBadge icon="users" />} />
+      <CardHeader title="Público" subtitle={audience.subtitle} right={<IconBadge icon="users" />} />
 
-      <div key={acc.id} className="ig-fade mt-6">
-        <p className={EYEBROW}>Género</p>
-        <div className="mt-2 flex items-end justify-between gap-4">
-          {gender.map((g, i) => (
-            <div key={g.label} className={i === 0 ? "" : "text-right"}>
-              <p className={`flex items-center gap-1.5 text-[13px] ${MUTED} ${i === 0 ? "" : "justify-end"}`}>
-                <span className={`h-2 w-2 rounded-full ${i === 0 ? "bg-[color:var(--accent)]" : "bg-[color:var(--bar-2)]"}`} />
-                {g.label}
-              </p>
-              <p className="mt-0.5 text-2xl font-semibold tracking-[-0.02em]">{g.value.toFixed(1)}%</p>
-            </div>
-          ))}
+      {!gender && !available.length ? (
+        <div className="mt-5 flex flex-1 flex-col">
+          <EmptyState icon="users" title="Sin datos de público todavía">Instagram muestra la demografía cuando la cuenta pasa de 100 seguidores.</EmptyState>
         </div>
-        <div className="mt-3 flex h-1.5 gap-[2px]" role="img" aria-label={gender.map((g) => `${g.label} ${g.value}%`).join(", ")}>
-          {gender.map((g, i) => (
-            <div key={g.label} className={`h-full rounded-full transition-all duration-500 ${i === 0 ? "bg-[color:var(--accent)]" : "bg-[color:var(--bar-2)]"}`} style={{ flex: `${g.value} 1 0%` }} />
-          ))}
-        </div>
-      </div>
-
-      <div className="mt-7 flex flex-wrap items-center justify-between gap-3">
-        <p className={EYEBROW}>Ubicaciones principales</p>
-        <Segmented
-          small
-          label="Tipo de ubicación"
-          value={view}
-          onChange={setView}
-          options={[
-            { value: "countries", label: "Países" },
-            { value: "cities", label: "Ciudades" },
-          ]}
-        />
-      </div>
-
-      <ul key={`${acc.id}-${view}`} className="ig-fade mt-2">
-        {rows.map((r) => (
-          <li key={r.label} className="flex items-center gap-3 py-2.5">
-            <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-[11px] font-semibold tracking-wide ${FILL} ${INK2}`}>
-              {r.code || <Icon name="pin" className="h-4 w-4" />}
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-baseline justify-between gap-3">
-                <p className="truncate text-sm font-medium">{r.label}</p>
-                <p className="shrink-0 text-sm font-semibold tabular-nums">{r.value.toFixed(1)}%</p>
+      ) : (
+        <>
+          {gender && (
+            <div key={acc.id} className="ig-fade mt-6">
+              <p className={EYEBROW}>Género</p>
+              <div className="mt-2 flex items-end justify-between gap-3">
+                {gender.map((g, i) => (
+                  <div key={g.label} className={`min-w-0 ${i === 0 ? "" : i === gender.length - 1 ? "text-right" : "text-center"}`}>
+                    <p className={`flex items-center gap-1.5 text-[13px] ${MUTED} ${i === 0 ? "" : i === gender.length - 1 ? "justify-end" : "justify-center"}`}>
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${GENDER_TONES[i] || GENDER_TONES[2]}`} />
+                      <span className="truncate">{g.label}</span>
+                    </p>
+                    <p className="mt-0.5 text-2xl font-semibold tracking-[-0.02em]">{g.value.toFixed(1)}%</p>
+                  </div>
+                ))}
               </div>
-              <ProgressBar value={r.value} className="mt-1.5" />
+              <div className="mt-3 flex h-1.5 gap-[2px]" role="img" aria-label={gender.map((g) => `${g.label} ${g.value.toFixed(1)}%`).join(", ")}>
+                {gender.map((g, i) => (
+                  <div key={g.label} className={`h-full rounded-full transition-all duration-500 ${GENDER_TONES[i] || GENDER_TONES[2]}`} style={{ flex: `${g.value} 1 0%` }} />
+                ))}
+              </div>
             </div>
-          </li>
-        ))}
-      </ul>
+          )}
+
+          {available.length > 0 && (
+            <>
+              <div className="mt-7 flex flex-wrap items-center justify-between gap-3">
+                <p className={EYEBROW}>{current === "ages" ? "Edad" : "Ubicaciones principales"}</p>
+                {available.length > 1 && (
+                  <Segmented small label="Tipo de dato de público" value={current} onChange={setView} options={available.map((k) => ({ value: k, label: LOCATION_LABELS[k] }))} />
+                )}
+              </div>
+              <ul key={`${acc.id}-${current}`} className="ig-fade mt-2">
+                {rows.map((r) => (
+                  <li key={r.label} className="flex items-center gap-3 py-2.5">
+                    <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-[11px] font-semibold tracking-wide ${FILL} ${INK2}`}>
+                      {r.code || <Icon name={current === "ages" ? "users" : "pin"} className="h-4 w-4" />}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <p className="truncate text-sm font-medium">{r.label}</p>
+                        <p className="shrink-0 text-sm font-semibold tabular-nums">{r.value.toFixed(1)}%</p>
+                      </div>
+                      <ProgressBar value={r.value} className="mt-1.5" />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </>
+      )}
     </Card>
   );
 }
@@ -1086,17 +2026,20 @@ function SplineChart({ values, axisLabels, tipLabels, unit, ariaLabel }) {
         </div>
       )}
 
-      <table className="sr-only">
-        <caption>{ariaLabel}</caption>
-        <tbody>
-          {values.map((v, i) => (
-            <tr key={i}>
-              <th scope="row">{tipLabels[i]}</th>
-              <td>{nf.format(v)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {/* Una tabla no se encoge a 1px, así que el contenedor oculto es un div */}
+      <div className="sr-only">
+        <table>
+          <caption>{ariaLabel}</caption>
+          <tbody>
+            {values.map((v, i) => (
+              <tr key={i}>
+                <th scope="row">{tipLabels[i]}</th>
+                <td>{nf.format(v)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -1112,56 +2055,41 @@ function Stat({ label, value, sub }) {
 }
 
 function ActivityCard({ acc, prefs, className = "" }) {
-  const [mode, setMode] = useState("daily");
-  const daily = mode === "daily";
-  const values = daily ? acc.daily : acc.monthly;
-  const tipLabels = daily ? values.map((_, i) => dayLabel(i + 1)) : MONTHS_LONG.map((m) => `${m} ${PERIOD.year}`);
-  const axisLabels = daily ? values.map((_, i) => (i % 7 === 0 ? `${i + 1} ${PERIOD.short}` : "")) : MONTHS;
-  const total = sum(values);
-  const peak = argmax(values);
-  const delta = daily ? pctChange(acc.interactions, acc.interactionsPrev) : pctChange(values[values.length - 1], values[0]);
+  const [mode, setMode] = useState(acc.charts[0].id);
+  const chart = acc.charts.find((c) => c.id === mode) || acc.charts[0];
+  const ready = chart.values.length > 1;
 
   return (
     <Card className={className}>
       <CardHeader
         title="Actividad"
-        subtitle={daily ? `Interacciones por día · ${PERIOD.month} ${PERIOD.year}` : `Interacciones por mes · ene – ${PERIOD.short} ${PERIOD.year}`}
-        right={
-          <Segmented
-            small
-            label="Periodo de la gráfica"
-            value={mode}
-            onChange={setMode}
-            options={[
-              { value: "daily", label: "Diario" },
-              { value: "monthly", label: "Mensual" },
-            ]}
-          />
-        }
+        subtitle={chart.subtitle}
+        right={<Segmented small label="Periodo de la gráfica" value={chart.id} onChange={setMode} options={acc.charts.map((c) => ({ value: c.id, label: c.label }))} />}
       />
 
-      <div key={`${acc.id}-${mode}`} className="ig-fade flex flex-1 flex-col">
+      <div key={`${acc.id}-${chart.id}`} className="ig-fade flex flex-1 flex-col">
         <div className="mt-5 flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
           <div>
-            <p className="text-[2.5rem] font-bold leading-none tracking-[-0.04em]">{formatNumber(total, prefs.compact)}</p>
+            <p className="text-[2.5rem] font-bold leading-none tracking-[-0.04em]">{formatNumber(chart.total, prefs.compact)}</p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <span className={`text-[13px] ${MUTED}`}>{daily ? `interacciones en ${PERIOD.month}` : `interacciones en ${PERIOD.year}`}</span>
-              {prefs.compare && <DeltaPill value={delta} suffix={daily ? `vs ${PERIOD.prevMonth}` : `${PERIOD.short} vs ene`} />}
+              <span className={`text-[13px] ${MUTED}`}>{chart.totalLabel}</span>
+              {prefs.compare && <DeltaPill value={chart.delta} suffix={chart.deltaSuffix} />}
             </div>
           </div>
           <div className="flex gap-8">
-            <Stat label={daily ? "Promedio diario" : "Promedio mensual"} value={formatNumber(total / values.length, prefs.compact)} />
-            <Stat label={daily ? "Día récord" : "Mejor mes"} value={formatNumber(values[peak], prefs.compact)} sub={tipLabels[peak]} />
+            {chart.stats.map((s) => (
+              <Stat key={s.label} label={s.label} value={formatNumber(s.value, prefs.compact)} sub={s.sub} />
+            ))}
           </div>
         </div>
 
-        <SplineChart
-          values={values}
-          axisLabels={axisLabels}
-          tipLabels={tipLabels}
-          unit="interacciones"
-          ariaLabel={daily ? `Interacciones diarias de ${acc.name} en ${PERIOD.month} ${PERIOD.year}` : `Interacciones mensuales de ${acc.name}, enero a ${PERIOD.month} ${PERIOD.year}`}
-        />
+        {ready ? (
+          <SplineChart values={chart.values} axisLabels={chart.axisLabels} tipLabels={chart.tipLabels} unit={chart.unit} ariaLabel={chart.ariaLabel} />
+        ) : (
+          <div className="mt-5 flex min-h-[240px] flex-1 flex-col">
+            <EmptyState icon="activity" title="Sin serie diaria todavía">Instagram tarda hasta 48 horas en procesar el alcance de cada día.</EmptyState>
+          </div>
+        )}
       </div>
     </Card>
   );
@@ -1231,78 +2159,12 @@ function InsightTile({ icon, label, stat, text, action }) {
       </div>
       <p className="mt-3 text-[2rem] font-bold leading-none tracking-[-0.03em]">{stat}</p>
       <p className={`mt-2.5 text-[13px] leading-relaxed ${INK2}`}>{text}</p>
-      <p className={`mt-auto flex items-start gap-2 border-t border-[color:var(--sep)] pt-3 text-[13px] font-medium leading-snug`}>
+      <p className="mt-auto flex items-start gap-2 border-t border-[color:var(--sep)] pt-3 text-[13px] font-medium leading-snug">
         <Icon name="arrowUp" className="mt-0.5 h-3.5 w-3.5 shrink-0 rotate-45" strokeWidth={2.25} />
         {action}
       </p>
     </li>
   );
-}
-
-function buildInsights(acc, goalValue) {
-  const reels = acc.posts.filter((p) => p.type === "reel");
-  const others = acc.posts.filter((p) => p.type !== "reel");
-  const reelAvg = avg(reels.map((p) => p.views));
-  const otherAvg = avg(others.map((p) => p.views));
-  const ratio = otherAvg ? reelAvg / otherAvg : 0;
-
-  const weekday = weekdayAverages(acc.daily);
-  const best = argmax(weekday);
-  const worst = argmin(weekday);
-  const lift = pctChange(weekday[best], weekday[worst]);
-
-  const net = acc.followersEnd - acc.followersStart;
-  const perDay = net / PERIOD.days;
-  const goal = Math.max(1, Number(goalValue) || acc.milestone.goal);
-  const remaining = Math.max(0, goal - acc.followersEnd);
-  const days = perDay > 0 ? Math.ceil(remaining / perDay) : null;
-
-  const country = acc.countries[0];
-  const topGender = [...acc.gender].sort((a, b) => b.value - a.value)[0];
-
-  return [
-    {
-      id: "format",
-      icon: "play",
-      label: "Formato ganador",
-      stat: `${ratio.toFixed(1)}×`,
-      text: `Tus reels promedian ${formatNumber(reelAvg)} vistas contra ${formatNumber(otherAvg)} de tus carruseles y fotos.`,
-      action: "Sube a 3 o 4 reels por semana y convierte tu carrusel con más vistas en reel.",
-    },
-    {
-      id: "weekday",
-      icon: "calendar",
-      label: "Tu mejor día",
-      stat: capitalize(WEEKDAYS[best]),
-      text: `Los ${WEEKDAYS[best]} promedias ${nf.format(Math.round(weekday[best]))} interacciones, ${lift.toFixed(0)}% más que los ${WEEKDAYS[worst]}.`,
-      action: `Guarda tu mejor contenido para los ${WEEKDAYS[best]} y usa los ${WEEKDAYS[worst]} para probar hooks.`,
-    },
-    remaining > 0
-      ? {
-          id: "goal",
-          icon: "target",
-          label: "Ritmo hacia tu meta",
-          stat: days != null ? `~${days} días` : "—",
-          text: `Al ritmo de ${PERIOD.month} (+${nf.format(Math.round(perDay))} seguidores al día) te faltan ${nf.format(remaining)} para llegar a ${nf.format(goal)}.`,
-          action: "Acelera con un post en colaboración o un «comenta PALABRA» esta semana.",
-        }
-      : {
-          id: "goal",
-          icon: "target",
-          label: "Ritmo hacia tu meta",
-          stat: "Cumplida",
-          text: `Ya pasaste tu meta de ${nf.format(goal)} seguidores.`,
-          action: "Sube la meta desde Editar para seguir midiendo tu avance.",
-        },
-    {
-      id: "audience",
-      icon: "pin",
-      label: "Tu público",
-      stat: `${country.value.toFixed(0)}%`,
-      text: `de tus seguidores está en ${country.label} y el ${topGender.value.toFixed(0)}% son ${topGender.label.toLowerCase()}.`,
-      action: "Aprovecha fechas locales: empieza a grabar contenido de Día de Muertos en octubre.",
-    },
-  ];
 }
 
 function HookCard({ hook }) {
@@ -1360,11 +2222,12 @@ function HookCard({ hook }) {
 
 function RecommendationsCard({ acc, goal, tried, onToggleTried, className = "" }) {
   const [tab, setTab] = useState("foryou");
-  const insights = buildInsights(acc, goal);
+  const insights = acc.buildInsights(goal);
   const allTips = [...TIPS.trends, ...TIPS.virality, ...TIPS.engagement];
   const triedCount = allTips.filter((t) => tried[t.id]).length;
   const tips = TIPS[tab] || [];
   const totalWeight = sum(REEL_STRUCTURE.map((s) => s.weight));
+  const gridCols = insights.length >= 4 ? "lg:grid-cols-4" : insights.length === 3 ? "lg:grid-cols-3" : "lg:grid-cols-2";
 
   return (
     <Card className={className}>
@@ -1396,16 +2259,21 @@ function RecommendationsCard({ acc, goal, tried, onToggleTried, className = "" }
       </div>
 
       <div key={`${tab}-${acc.id}`} className="ig-fade mt-4">
-        {tab === "foryou" && (
-          <>
-            <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {insights.map((ins) => (
-                <InsightTile key={ins.id} {...ins} />
-              ))}
-            </ul>
-            <p className={`mt-3 text-xs ${FAINT}`}>Calculado con los datos de {acc.name} en {PERIOD.month}. Cambia de cuenta arriba para ver las de la otra.</p>
-          </>
-        )}
+        {tab === "foryou" &&
+          (insights.length ? (
+            <>
+              <ul className={`grid gap-3 sm:grid-cols-2 ${gridCols}`}>
+                {insights.map((ins) => (
+                  <InsightTile key={ins.id} {...ins} />
+                ))}
+              </ul>
+              <p className={`mt-3 text-xs ${FAINT}`}>
+                {acc.source === "live" ? `Calculado en vivo con tus datos de Instagram (${acc.handle}).` : `Calculado con los datos de ejemplo de ${acc.name}.`}
+              </p>
+            </>
+          ) : (
+            <EmptyState icon="bulb" title="Aún no hay suficientes datos">Las recomendaciones aparecen cuando Instagram entrega tu actividad y tu público.</EmptyState>
+          ))}
 
         {tab === "hooks" && (
           <>
@@ -1506,25 +2374,71 @@ const GLOBAL_CSS = `
 .ig-shadow-tip { box-shadow: var(--shadow-tip); }
 @keyframes igFade { from { opacity: .35; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @keyframes igPop { from { opacity: 0; transform: translateY(-4px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes igPulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes igSpin { to { transform: rotate(360deg); } }
 .ig-fade { animation: igFade .4s cubic-bezier(.2,.7,.2,1) both; }
 .ig-pop { animation: igPop .18s ease-out both; transform-origin: top right; }
-@media (prefers-reduced-motion: reduce) { .ig-fade, .ig-pop { animation: none; } .ig-root, .ig-root * { transition: none !important; } }
+.ig-pulse { animation: igPulse 2s ease-in-out infinite; }
+.ig-spin { animation: igSpin 1s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .ig-fade, .ig-pop, .ig-pulse, .ig-spin { animation: none; } .ig-root, .ig-root * { transition: none !important; } }
 `;
+
+const SAMPLE_MODELS = SAMPLE_ACCOUNTS.map(sampleModel);
 
 export default function InstagramDashboard() {
   const [stored] = useState(loadStore);
-  const [accountId, setAccountId] = useState(() => (ACCOUNTS.some((a) => a.id === stored.accountId) ? stored.accountId : ACCOUNTS[0].id));
+  const [accountId, setAccountId] = useState(() => stored.accountId || SAMPLE_MODELS[0].id);
   const [prefs, setPrefs] = useState(() => ({ compact: true, compare: true, ...(stored.prefs || {}) }));
-  const [notes, setNotes] = useState(() => (stored.notes && typeof stored.notes === "object" ? stored.notes : Object.fromEntries(ACCOUNTS.map((a) => [a.id, a.seedNotes]))));
+  const [notes, setNotes] = useState(() => (stored.notes && typeof stored.notes === "object" ? stored.notes : {}));
   const [milestones, setMilestones] = useState(() => (stored.milestones && typeof stored.milestones === "object" ? stored.milestones : {}));
   const [tried, setTried] = useState(() => (stored.tried && typeof stored.tried === "object" ? stored.tried : {}));
   const [themeChoice, setThemeChoice] = useState(() => (stored.theme === "light" || stored.theme === "dark" ? stored.theme : null));
   const [editing, setEditing] = useState(false);
   const theme = themeChoice || systemTheme();
 
+  // --- Datos en vivo ---
+  const mcp = useMcpCapability();
+  const [ig, refreshInstagram] = useInstagramLive(mcp.api);
+  const [tkEnabled, setTkEnabled] = useState(false);
+  const tiktok = useTikTok(mcp.api, tkEnabled);
+
+  // TikTok se carga solo si el visitante ya dio permiso a Metricool; si no, espera a que lo pida
   useEffect(() => {
-    saveStore({ accountId, prefs, notes, milestones, tried, theme: themeChoice });
-  }, [accountId, prefs, notes, milestones, tried, themeChoice]);
+    if (!mcp.api) return undefined;
+    let alive = true;
+    window.claude
+      .use("permissions")
+      .then((perm) => (perm ? perm.state(`mcp:${MC_SERVER}`) : "unavailable"))
+      .then((s) => {
+        if (alive && s === "granted") setTkEnabled(true);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [mcp.api]);
+
+  const liveModel = useMemo(() => (ig.status === "ready" || ig.batch ? instagramModel(ig) : null), [ig]);
+  const accounts = useMemo(() => {
+    if (!liveModel) return SAMPLE_MODELS;
+    const extras = SAMPLE_MODELS.filter((s) => s.id !== "principal" && s.handle.toLowerCase() !== liveModel.handle.toLowerCase());
+    return [liveModel, ...extras];
+  }, [liveModel]);
+
+  const acc = accounts.find((a) => a.id === accountId) || accounts[0];
+  const connecting = mcp.status === "connecting" || (mcp.status === "ready" && ig.status === "loading");
+  const igError = ig.status === "error" ? ig.error : null;
+  const refreshing = !!ig.refreshing;
+
+  const refresh = () => {
+    if (!mcp.api || refreshing) return;
+    refreshInstagram();
+    if (tkEnabled) Promise.resolve(mcp.api.invalidate(MC_SERVER)).catch(() => {});
+  };
+
+  useEffect(() => {
+    saveStore({ accountId: acc.id, prefs, notes, milestones, tried, theme: themeChoice });
+  }, [acc.id, prefs, notes, milestones, tried, themeChoice]);
 
   // Pinta también el fondo de la página para que no asome el color del otro tema
   useEffect(() => {
@@ -1534,16 +2448,15 @@ export default function InstagramDashboard() {
     document.documentElement.style.colorScheme = theme;
   }, [theme]);
 
-  const acc = ACCOUNTS.find((a) => a.id === accountId) || ACCOUNTS[0];
   const milestone = { ...acc.milestone, ...(milestones[acc.id] || {}) };
-  const accNotes = Array.isArray(notes[acc.id]) ? notes[acc.id] : [];
+  const accNotes = Array.isArray(notes[acc.id]) ? notes[acc.id] : acc.seedNotes;
 
   const addNote = (text) =>
     setNotes((prev) => ({
       ...prev,
-      [acc.id]: [...(prev[acc.id] || []), { id: `${acc.id}-${Date.now()}`, text, date: shortDate() }],
+      [acc.id]: [...(Array.isArray(prev[acc.id]) ? prev[acc.id] : acc.seedNotes), { id: `${acc.id}-${Date.now()}`, text, date: shortDate() }],
     }));
-  const deleteNote = (id) => setNotes((prev) => ({ ...prev, [acc.id]: (prev[acc.id] || []).filter((n) => n.id !== id) }));
+  const deleteNote = (id) => setNotes((prev) => ({ ...prev, [acc.id]: (Array.isArray(prev[acc.id]) ? prev[acc.id] : acc.seedNotes).filter((n) => n.id !== id) }));
   const changeMilestone = (patch) => setMilestones((prev) => ({ ...prev, [acc.id]: { ...(prev[acc.id] || {}), ...patch } }));
   const resetMilestone = () =>
     setMilestones((prev) => {
@@ -1553,12 +2466,16 @@ export default function InstagramDashboard() {
     });
   const toggleTried = (id) => setTried((prev) => ({ ...prev, [id]: !prev[id] }));
 
+  const chipKind = acc.source === "live" ? "live" : connecting ? "connecting" : "sample";
+
   return (
     <div className={`ig-root min-h-screen ${INK}`} data-theme={theme}>
       <style>{GLOBAL_CSS}</style>
+
       <div className="mx-auto max-w-[1200px] px-4 pb-12 pt-5 sm:px-6 lg:px-8">
         <TopBar
-          accountId={accountId}
+          accounts={accounts}
+          accountId={acc.id}
           onSelect={setAccountId}
           editing={editing}
           onToggleEdit={() => setEditing((e) => !e)}
@@ -1566,6 +2483,8 @@ export default function InstagramDashboard() {
           setPrefs={setPrefs}
           theme={theme}
           onToggleTheme={() => setThemeChoice(theme === "dark" ? "light" : "dark")}
+          compareLabel={acc.compareSuffix}
+          showSampleTags={!!liveModel}
         />
 
         <header className="mb-6 mt-9 flex flex-wrap items-end justify-between gap-4">
@@ -1575,25 +2494,45 @@ export default function InstagramDashboard() {
           </div>
           <div className="flex flex-col items-start gap-1.5 sm:items-end">
             <p className="text-sm font-medium">
-              {acc.handle}{" "}
-              <span className={`font-normal ${MUTED}`}>
-                · Periodo: 1 – 31 {PERIOD.short} {PERIOD.year}
-              </span>
+              {acc.handle} <span className={`font-normal ${MUTED}`}>· Periodo: {acc.rangeLabel}</span>
             </p>
-            <span className={`rounded-full border border-dashed px-2.5 py-0.5 text-xs ${DASH} ${MUTED}`}>Datos de ejemplo</span>
+            <SourceChip kind={chipKind} />
           </div>
         </header>
 
+        {igError && (
+          <Banner
+            action={
+              canRetry(igError) ? (
+                <button type="button" onClick={refreshInstagram} className={`rounded-full px-3.5 py-1.5 text-xs font-medium ${ACCENT} ${FOCUS}`}>
+                  Reintentar
+                </button>
+              ) : null
+            }
+          >
+            {errorCopy(igError)} Mientras tanto ves datos de ejemplo.
+          </Banner>
+        )}
+
+        {liveModel && acc.source === "sample" && (
+          <Banner icon="flag">
+            <strong className={INK}>{acc.name}</strong> todavía no está conectado, así que estos números son de ejemplo. Conecta su Instagram en Composio y aparecerá aquí con datos reales.
+          </Banner>
+        )}
+
+        {acc.source === "live" && <LiveStrip acc={acc} tiktok={tiktok} onConnectTikTok={() => setTkEnabled(true)} onRefresh={refresh} refreshing={refreshing} />}
+
         {editing && (
-          <div className={`ig-fade ig-shadow mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl px-4 py-3 text-sm ${CARD_BG} ${INK2}`}>
-            <span className="flex items-center gap-2">
-              <Icon name="pencil" className={`h-4 w-4 ${INK}`} />
-              Modo edición: cambia el titular, el resumen y la meta de seguidores, o elimina notas de campaña.
-            </span>
-            <button type="button" onClick={() => setEditing(false)} className={`rounded-full px-3.5 py-1.5 text-xs font-medium ${ACCENT} ${FOCUS}`}>
-              Terminar
-            </button>
-          </div>
+          <Banner
+            icon="pencil"
+            action={
+              <button type="button" onClick={() => setEditing(false)} className={`rounded-full px-3.5 py-1.5 text-xs font-medium ${ACCENT} ${FOCUS}`}>
+                Terminar
+              </button>
+            }
+          >
+            Modo edición: cambia el titular, el resumen y la meta de seguidores, o elimina notas de campaña.
+          </Banner>
         )}
 
         <main className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 lg:gap-5">
@@ -1608,13 +2547,17 @@ export default function InstagramDashboard() {
             onAddNote={addNote}
             onDeleteNote={deleteNote}
           />
-          <ContentCard acc={acc} prefs={prefs} />
-          <AudienceCard acc={acc} />
-          <ActivityCard acc={acc} prefs={prefs} className="md:col-span-2" />
+          <ContentCard key={`content-${acc.id}`} acc={acc} prefs={prefs} />
+          <AudienceCard key={`audience-${acc.id}`} acc={acc} />
+          <ActivityCard key={`activity-${acc.id}`} acc={acc} prefs={prefs} className="md:col-span-2" />
           <RecommendationsCard acc={acc} goal={milestone.goal} tried={tried} onToggleTried={toggleTried} className="md:col-span-2 lg:col-span-3" />
         </main>
 
-        <p className={`mt-8 text-center text-xs ${FAINT}`}>Datos de ejemplo. Conecta la API de Instagram para ver tus métricas reales.</p>
+        <p className={`mt-8 text-center text-xs ${FAINT}`}>
+          {acc.source === "live"
+            ? "Datos en vivo de Instagram (vía Composio) leídos con tus credenciales. Nada de esto se guarda en la página."
+            : "Datos de ejemplo. Abre esta página en claude.ai con Composio conectado para ver tus métricas reales."}
+        </p>
       </div>
     </div>
   );

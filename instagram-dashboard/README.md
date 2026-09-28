@@ -1,36 +1,32 @@
 # Analíticas de Instagram
 
-Dashboard estilo "bento" (React + Tailwind) con datos de ejemplo para dos cuentas: **Principal** y **Kyros**.
+Dashboard estilo "bento" (React + Tailwind) que muestra tus analíticas de Instagram en vivo cuando se abre en claude.ai con los conectores activos, y datos de ejemplo en cualquier otro lugar.
 
 | Archivo | Para qué sirve |
 |---|---|
 | `InstagramDashboard.jsx` | Componente único de React + Tailwind (export default). Pégalo en un proyecto Vite/Next con Tailwind 3. |
-| `index.html` | Versión compilada y autónoma. Ábrela en el navegador; carga React desde cdnjs. |
+| `index.html` | Versión compilada y autónoma. Carga React desde cdnjs. Fuera de claude.ai muestra datos de ejemplo. |
+
+## De dónde salen los datos
+
+La página usa la capability `mcp` de los artefactos de claude.ai, que llama a tus conectores con tus propias credenciales. La página no guarda nada de lo que lee.
+
+- **Instagram → conector Composio.** Una sola llamada a `COMPOSIO_MULTI_EXECUTE_TOOL` ejecuta en paralelo:
+  - `INSTAGRAM_GET_USER_INFO`: seguidores y número de publicaciones.
+  - `INSTAGRAM_GET_IG_USER_MEDIA` e `INSTAGRAM_GET_IG_USER_STORIES`: publicaciones del feed e historias activas.
+  - `INSTAGRAM_GET_USER_INSIGHTS`: totales de los últimos 30 días y de los 30 anteriores, desglose por tipo de contenido, seguidores ganados y perdidos, alcance diario y demografía.
+  - Una segunda llamada trae `INSTAGRAM_GET_IG_MEDIA_INSIGHTS` de cada historia activa.
+- **TikTok → conector Metricool** (`getBrandSettings` y `getAnalyticsDataByMetrics`). Solo se consulta si ya diste permiso a Metricool o si pulsas "Cargar desde Metricool".
+
+Si un conector falla, cada sección muestra qué pasó y cómo arreglarlo (reconectar, agregar el conector o reintentar), y el resto del panel sigue funcionando.
 
 ## Qué incluye
 
-- Selector de cuenta en forma de píldora. Al cambiar de cuenta se actualizan todas las métricas.
-- Tarjeta oscura de resumen: visualizaciones totales, seguidores netos, interacciones, crecimiento, alcance y engagement.
-- Hitos del mes con día récord, meta de seguidores y notas de campaña (se guardan en `localStorage` del navegador).
-- Rendimiento de las 4 publicaciones recientes, que puedes ordenar por fecha o por visualizaciones.
-- Público: género y países/ciudades principales con barras finas.
-- Gráfica spline de interacciones (diaria o mensual) con tooltip al pasar el cursor o con las flechas del teclado.
-- Botón **Editar** para cambiar el titular, el resumen y la meta de seguidores, y **Ajustes** para cambiar el formato de números o ocultar la comparación con el mes anterior.
-- Tema **claro/oscuro** con el botón de luna/sol. Sin elegir, sigue el tema del sistema. En oscuro, la tarjeta de resumen se invierte a clara para seguir destacando.
-- Sección de **Recomendaciones** con 5 pestañas:
-  - *Para tu cuenta*: 4 insights calculados con los datos de la cuenta activa (formato ganador, mejor día, ritmo hacia la meta y público).
-  - *Tendencias*, *Viralidad* y *Engagement*: consejos investigados en septiembre de 2026, cada uno con sus fuentes y un botón "Lo probé" para llevar el control.
-  - *Hooks*: estructura de un reel que retiene y 8 plantillas de hooks con botón para copiar.
-
-Los consejos viven en las constantes `TIPS`, `HOOKS` y `SOURCES`; actualízalas cuando cambien las tendencias.
-
-## Conectar datos reales
-
-Todos los datos están en la constante `ACCOUNTS` al inicio de `InstagramDashboard.jsx`. Para usar tus métricas reales, reemplázala por la respuesta de tu backend respetando la misma forma:
-
-1. Convierte tus cuentas a **Profesional** (Creador o Empresa) en Instagram.
-2. Crea una app en [developers.facebook.com](https://developers.facebook.com) con la **Instagram API** y pide los permisos `instagram_business_basic` y `instagram_business_manage_insights`.
-3. Crea un backend pequeño (por ejemplo, una función serverless en Vercel o Netlify) que guarde el token de acceso y llame a los endpoints `/{ig-user-id}/insights` y `/{ig-user-id}/media`.
-4. En el componente, haz `fetch` a tu backend y transforma la respuesta al formato de `ACCOUNTS`.
-
-El token nunca debe ir en el código del frontend.
+- Selector de cuenta en forma de píldora. Las cuentas no conectadas (por ahora Kyros) se marcan como "ejemplo".
+- Tarjeta de resumen con contraste invertido: visualizaciones, seguidores netos, alcance, interacciones, visitas al perfil y engagement, con su cambio contra los 30 días anteriores.
+- Hitos con día de más alcance, meta de seguidores y notas de campaña (se guardan en `localStorage`).
+- Rendimiento de contenido: publicaciones del feed o, si no hay, tus historias activas con vistas y alcance.
+- Público: género, edad, países y ciudades.
+- Gráfica spline del alcance diario (30 o 60 días) con tooltip por cursor o teclado.
+- Tema claro/oscuro, modo **Editar** y **Ajustes** de formato.
+- Recomendaciones: consejos calculados con tus datos, más tendencias, viralidad, hooks y engagement investigados en septiembre de 2026, con fuentes.
