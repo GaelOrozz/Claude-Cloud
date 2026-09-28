@@ -14,7 +14,7 @@ const ACCOUNTS = [
   {
     id: "principal",
     name: "Principal",
-    handle: "@cuenta.principal",
+    handle: "@aramorozz",
     initial: "P",
     views: 1842300,
     viewsPrev: 1493000,
@@ -64,7 +64,7 @@ const ACCOUNTS = [
   {
     id: "kyros",
     name: "Kyros",
-    handle: "@kyros.oficial",
+    handle: "@kyrosclo",
     initial: "K",
     views: 486900,
     viewsPrev: 358000,
