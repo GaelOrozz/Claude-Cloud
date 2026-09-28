@@ -128,6 +128,7 @@ const TYPE_ICON = { reel: "play", carrusel: "copy", foto: "image", historia: "pl
 
 const CP_SERVER = "Composio";
 const CP_TOOL = "COMPOSIO_MULTI_EXECUTE_TOOL";
+const CP_CONNECTIONS = "COMPOSIO_MANAGE_CONNECTIONS"; // solo se usa con action "list" para descubrir las cuentas conectadas
 const MC_SERVER = "Metricool Social Media Management";
 const MC_BRANDS = "getBrandSettings";
 const MC_DATA = "getAnalyticsDataByMetrics";
@@ -593,15 +594,22 @@ function sampleInsights(r, goalValue, dayTs) {
 /*  Instagram en vivo vía Composio                                     */
 /* ------------------------------------------------------------------ */
 
-// Una sola llamada al ejecutor de Composio con todas las lecturas en paralelo
+// Lecturas por cuenta; todas las cuentas van en la misma llamada al ejecutor de Composio
 const B = { user: 0, media: 1, stories: 2, totals: 3, prevTotals: 4, byType: 5, follows: 6, series: 7, prevSeries: 8, gender: 9, age: 10, country: 11, city: 12 };
-function instagramBatch(w) {
-  const insights = (args) => ({ tool_slug: "INSTAGRAM_GET_USER_INSIGHTS", arguments: args });
+const BATCH_SIZE = 13;
+const MAX_BATCH_ITEMS = 48; // el ejecutor acepta hasta 50 herramientas por llamada
+const MEDIA_INSIGHTS_PER_ACCOUNT = 6;
+const FEED_METRICS = ["views", "reach", "likes", "comments", "saved", "shares"];
+const STORY_METRICS = ["views", "reach", "total_interactions"];
+
+function instagramBatch(w, account) {
+  const tool = (tool_slug, args) => (account ? { tool_slug, account, arguments: args } : { tool_slug, arguments: args });
+  const insights = (args) => tool("INSTAGRAM_GET_USER_INSIGHTS", args);
   const demographics = (breakdown) => insights({ metric: ["follower_demographics"], period: "lifetime", timeframe: "this_month", metric_type: "total_value", breakdown });
   return [
-    { tool_slug: "INSTAGRAM_GET_USER_INFO", arguments: { ig_user_id: "me", fields: "id,username,name,followers_count,follows_count,media_count" } },
-    { tool_slug: "INSTAGRAM_GET_IG_USER_MEDIA", arguments: { ig_user_id: "me", limit: 25, fields: "id,caption,media_type,media_product_type,permalink,timestamp,like_count,comments_count,view_count" } },
-    { tool_slug: "INSTAGRAM_GET_IG_USER_STORIES", arguments: { fields: "id,media_type,permalink,timestamp,caption" } },
+    tool("INSTAGRAM_GET_USER_INFO", { ig_user_id: "me", fields: "id,username,name,followers_count,follows_count,media_count" }),
+    tool("INSTAGRAM_GET_IG_USER_MEDIA", { ig_user_id: "me", limit: 25, fields: "id,caption,media_type,media_product_type,permalink,timestamp,like_count,comments_count,view_count" }),
+    tool("INSTAGRAM_GET_IG_USER_STORIES", { fields: "id,media_type,permalink,timestamp,caption" }),
     insights({ metric: IG_TOTALS, period: "day", metric_type: "total_value", since: w.since, until: w.until }),
     insights({ metric: IG_TOTALS, period: "day", metric_type: "total_value", since: w.prevSince, until: w.since }),
     insights({ metric: ["views", "reach"], period: "day", metric_type: "total_value", breakdown: "media_product_type", since: w.since, until: w.until }),
@@ -614,6 +622,20 @@ function instagramBatch(w) {
     demographics("city"),
   ];
 }
+
+// Cuentas de Instagram activas en Composio (respuesta de COMPOSIO_MANAGE_CONNECTIONS con action "list")
+function parseConnections(result) {
+  const json = coerceJson(result);
+  const accounts = json?.data?.results?.instagram?.accounts;
+  if (!Array.isArray(accounts)) return [];
+  return accounts
+    .filter((a) => a && a.id && String(a.status).toLowerCase() === "active" && a.user_info?.username)
+    .map((a) => ({ id: a.id, alias: a.alias || null, username: a.user_info.username, userId: a.user_info.id || null }))
+    .sort((a, b) => a.username.localeCompare(b.username));
+}
+
+const chunk = (arr, size) => Array.from({ length: Math.ceil(arr.length / size) }, (_, i) => arr.slice(i * size, i * size + size));
+const titleCase = (s) => String(s).toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase());
 
 // El conector puede entregar el JSON ya interpretado (payload) o como texto; esto lo normaliza
 function coerceJson(result) {
@@ -672,7 +694,8 @@ function insightBreakdown(data, metric) {
     ? results.map((r) => ({ key: r?.dimension_values?.[0], value: toNum(r?.value) })).filter((r) => r.key != null && isNum(r.value))
     : [];
 }
-// Serie diaria: Instagram marca cada valor con el final del día (end_time); se omiten los días aún sin procesar
+// Serie diaria: el valor con end_time del día D corresponde a ese día D (coincide con los picos del día
+// en que se publicó). Se omite el día en curso, que Instagram todavía no termina de procesar.
 function insightSeries(data) {
   const values = Array.isArray(listOf(data)[0]?.values) ? listOf(data)[0].values : [];
   const cutoff = Date.now() - DAY_MS;
@@ -680,7 +703,7 @@ function insightSeries(data) {
     .map((v) => ({ end: Date.parse(v?.end_time), value: toNum(v?.value) }))
     .filter((v) => Number.isFinite(v.end) && isNum(v.value) && v.end <= cutoff)
     .map((v) => {
-      const d = new Date(v.end - 12 * 3600 * 1000);
+      const d = new Date(v.end);
       return { ts: utcDay(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()), value: v.value };
     });
 }
@@ -709,13 +732,17 @@ const captionTitle = (caption, fallback) => {
 };
 const safeUrl = (u) => (typeof u === "string" && /^https:\/\//.test(u) ? u : null);
 
+// live = { conn: cuenta de Composio (o null = predeterminada), batch, mediaInsights: { [mediaId]: métricas }, storedAt }
 function instagramModel(live) {
   const batch = live.batch;
+  const conn = live.conn || {};
   const user = okData(batch[B.user]) || {};
-  const username = user.username || "instagram";
+  const username = user.username || conn.username || "instagram";
+  const mediaInsights = live.mediaInsights || {};
   const totals = insightTotals(okData(batch[B.totals]));
   const prev = insightTotals(okData(batch[B.prevTotals]));
-  const byType = insightBreakdown(okData(batch[B.byType]), "views");
+  // Instagram a veces agrega una categoría técnica ("DEFAULT_DO_NOT_USE") que no es un formato real
+  const byType = insightBreakdown(okData(batch[B.byType]), "views").filter((r) => !String(r.key).startsWith("DEFAULT"));
   const followRows = insightBreakdown(okData(batch[B.follows]), "follows_and_unfollows");
   const cur = insightSeries(okData(batch[B.series]));
   const before = insightSeries(okData(batch[B.prevSeries]));
@@ -750,6 +777,7 @@ function instagramModel(live) {
   const feed = listOf(okData(mediaEntry)).map((m, i) => {
     const ts = Date.parse(m.timestamp);
     const type = mapMediaType(m.media_type, m.media_product_type);
+    const ins = mediaInsights[m.id] || {};
     return {
       id: m.id || `m-${i}`,
       title: captionTitle(m.caption, "Publicación sin texto"),
@@ -757,15 +785,16 @@ function instagramModel(live) {
       icon: TYPE_ICON[type],
       ts: Number.isFinite(ts) ? ts : 0,
       dateLabel: Number.isFinite(ts) ? localDayTime(ts) : "",
-      primary: toNum(m.view_count),
-      secondary: { icon: "heart", label: "Me gusta", value: toNum(m.like_count) },
+      // Las vistas por post vienen de sus métricas individuales (view_count casi nunca llega en el listado)
+      primary: toNum(ins.views ?? m.view_count),
+      secondary: { icon: "heart", label: "Me gusta", value: toNum(ins.likes ?? m.like_count) },
       url: safeUrl(m.permalink),
       tone: TONES[i % TONES.length],
     };
   });
   const stories = listOf(okData(storiesEntry)).map((s, i) => {
     const ts = Date.parse(s.timestamp);
-    const ins = live.storyInsights?.[s.id] || {};
+    const ins = mediaInsights[s.id] || {};
     return {
       id: s.id || `s-${i}`,
       title: captionTitle(s.caption, "Historia sin texto"),
@@ -789,7 +818,10 @@ function instagramModel(live) {
         : null;
 
   let posts;
-  if (feed.length) posts = { state: "ready", subtitle: "Publicaciones recientes", items: feed, note: isNum(mediaCount) ? `${nf.format(mediaCount)} publicaciones en tu perfil.` : null };
+  if (feed.length) {
+    const counts = [isNum(mediaCount) ? `${nf.format(mediaCount)} publicaciones en tu perfil` : null, stories.length ? `${stories.length} ${stories.length === 1 ? "historia activa" : "historias activas"}` : null].filter(Boolean);
+    posts = { state: "ready", subtitle: "Publicaciones recientes", items: feed, note: counts.length ? `${counts.join(" · ")}.` : null };
+  }
   else if (stories.length) posts = { state: "ready", subtitle: "Historias activas · últimas 24 h", items: stories, note: storyNote };
   else if (!mediaEntry?.ok && !storiesEntry?.ok) posts = { state: "error", items: [], error: { code: "tool_error", message: mediaEntry?.error || storiesEntry?.error } };
   else
@@ -822,11 +854,13 @@ function instagramModel(live) {
 
   const viewsRatio = isNum(views) && isNum(prev.views) && prev.views > 0 ? views / prev.views : null;
 
+  const name = conn.alias ? titleCase(conn.alias) : username;
+
   return {
-    id: `ig-${user.id || username}`,
-    name: username,
+    id: `ig-${user.id || conn.userId || username}`,
+    name,
     handle: `@${username}`,
-    initial: username.charAt(0).toUpperCase(),
+    initial: name.charAt(0).toUpperCase(),
     source: "live",
     storedAt: live.storedAt,
     periodLabel: "Últimos 30 días",
@@ -907,13 +941,17 @@ function instagramInsights({ both, byType, mediaCount, profileViews, follows, co
   if (typeTotal > 0) {
     const top = [...byType].sort((a, b) => b.value - a.value)[0];
     const label = PRODUCT_LABEL[top.key] || String(top.key).toLowerCase();
+    const reelShare = ((byType.find((r) => r.key === "REEL")?.value || 0) / typeTotal) * 100;
+    let action = "Mantén ese formato y prueba hooks nuevos con Trial Reels.";
+    if (top.key === "STORY") action = "Sube 2 o 3 reels por semana: las historias solo las ven tus seguidores y los reels llegan a gente nueva.";
+    else if (reelShare < 10) action = `Solo el ${reelShare.toFixed(0)}% de tus vistas vino de reels: sube 2 por semana para llegar a gente que aún no te sigue.`;
     out.push({
       id: "format",
       icon: "play",
       label: "De dónde vienen tus vistas",
       stat: `${((top.value / typeTotal) * 100).toFixed(0)}%`,
       text: `de tus vistas de los últimos 30 días vino de ${label}.${mediaCount === 0 ? " No tienes publicaciones en el feed." : ""}`,
-      action: top.key === "STORY" ? "Sube 2 o 3 reels por semana: las historias solo las ven tus seguidores y los reels llegan a gente nueva." : "Mantén ese formato y prueba hooks nuevos con Trial Reels.",
+      action,
     });
   }
   if (both.length >= 14) {
@@ -1033,7 +1071,10 @@ function useMcpCapability() {
   return state;
 }
 
-// Lee Instagram por Composio: una llamada con todas las métricas y otra con las métricas de cada historia activa
+// Lee Instagram por Composio:
+//   1. descubre las cuentas conectadas (si falla, usa la cuenta predeterminada),
+//   2. una llamada con todas las métricas de todas las cuentas,
+//   3. otra con las métricas de los posts recientes y las historias activas de cada cuenta.
 function useInstagramLive(api) {
   const [state, setState] = useState({ status: api ? "loading" : "idle" });
   const [nonce, setNonce] = useState(0);
@@ -1044,31 +1085,67 @@ function useInstagramLive(api) {
     let alive = true;
     const force = forceRef.current;
     forceRef.current = false;
-    setState((s) => (s.batch ? { ...s, refreshing: true } : { status: "loading" }));
+    setState((s) => (s.accounts ? { ...s, refreshing: true } : { status: "loading" }));
     const options = { cache: { ...CACHE_OPTIONS, ...(force ? { refresh: true } : {}) } };
     const run = (tools) => api.callTool(CP_SERVER, CP_TOOL, { tools, sync_response_to_workbench: false, thought: "Leer analíticas de Instagram para el dashboard" }, options);
+    // Varias llamadas cuando no caben en una; el resultado se une en el mismo orden
+    const runAll = async (tools) => {
+      const groups = chunk(tools, MAX_BATCH_ITEMS);
+      const parts = await Promise.all(groups.map(run));
+      const entries = groups.flatMap((group, gi) => {
+        const parsed = parseBatch(parts[gi]);
+        return group.map((_, i) => parsed[i]);
+      });
+      return { entries, first: parts[0] };
+    };
 
     (async () => {
       try {
-        const result = await run(instagramBatch(instagramWindows()));
-        const batch = parseBatch(result);
-        const stories = listOf(okData(batch[B.stories])).filter((s) => s && s.id).slice(0, 10);
-        const storyInsights = {};
-        if (stories.length) {
+        let conns = [];
+        try {
+          conns = parseConnections(await api.callTool(CP_SERVER, CP_CONNECTIONS, { toolkits: [{ name: "instagram", action: "list" }] }, options));
+        } catch (err) {
+          if (RETRACT_CODES.has(err?.code)) throw err;
+          /* sin lista de cuentas: se lee la cuenta predeterminada */
+        }
+        const targets = conns.length ? conns : [null];
+
+        const w = instagramWindows();
+        const main = await runAll(targets.flatMap((c) => instagramBatch(w, c?.id)));
+        const accounts = targets.map((conn, i) => ({ conn, batch: main.entries.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE) }));
+
+        // Métricas individuales: posts recientes del feed e historias activas
+        const mediaCalls = [];
+        accounts.forEach((acc, ai) => {
+          const feed = listOf(okData(acc.batch[B.media])).filter((m) => m && m.id).slice(0, MEDIA_INSIGHTS_PER_ACCOUNT);
+          const stories = listOf(okData(acc.batch[B.stories])).filter((s) => s && s.id).slice(0, MEDIA_INSIGHTS_PER_ACCOUNT);
+          feed.forEach((m) => mediaCalls.push({ ai, id: m.id, metric: FEED_METRICS }));
+          stories.forEach((s) => mediaCalls.push({ ai, id: s.id, metric: STORY_METRICS }));
+        });
+        accounts.forEach((acc) => {
+          acc.mediaInsights = {};
+        });
+        if (mediaCalls.length) {
           try {
-            const res2 = await run(stories.map((s) => ({ tool_slug: "INSTAGRAM_GET_IG_MEDIA_INSIGHTS", arguments: { ig_media_id: s.id, metric: ["views", "reach", "total_interactions"] } })));
-            const b2 = parseBatch(res2);
-            stories.forEach((s, i) => {
-              storyInsights[s.id] = insightTotals(okData(b2[i]));
+            const res = await runAll(
+              mediaCalls.map((c) => {
+                const account = targets[c.ai]?.id;
+                const item = { tool_slug: "INSTAGRAM_GET_IG_MEDIA_INSIGHTS", arguments: { ig_media_id: c.id, metric: c.metric } };
+                return account ? { ...item, account } : item;
+              })
+            );
+            mediaCalls.forEach((c, i) => {
+              accounts[c.ai].mediaInsights[c.id] = insightTotals(okData(res.entries[i]));
             });
           } catch {
-            /* sin métricas por historia: se muestran sin números */
+            /* sin métricas por publicación: se muestran sin vistas */
           }
         }
-        if (alive) setState({ status: "ready", batch, storyInsights, storedAt: result?.cache?.storedAt ?? Date.now() });
+
+        if (alive) setState({ status: "ready", accounts, storedAt: main.first?.cache?.storedAt ?? Date.now() });
       } catch (err) {
         const error = err && err.code ? err : { code: "upstream_error", message: String(err?.message || "") };
-        if (alive) setState((s) => (s.batch && !RETRACT_CODES.has(error.code) ? { ...s, refreshing: false, staleError: error } : { status: "error", error }));
+        if (alive) setState((s) => (s.accounts && !RETRACT_CODES.has(error.code) ? { ...s, refreshing: false, staleError: error } : { status: "error", error }));
       }
     })();
     return () => {
@@ -1125,8 +1202,10 @@ function useTikTok(api, enabled) {
   if (brands.status === "error") return { state: "error", error: brands.error };
   if (brands.status !== "ready") return { state: "loading" };
   if (!brand) return { state: "none" };
-  if (tk.status === "error") return { state: "error", error: tk.error };
-  if (tk.status !== "ready") return { state: "loading" };
+  // Instagram de la misma marca en Metricool: el TikTok solo se muestra junto a esa cuenta
+  const igHandle = brand.networksData?.instagramData ? `@${String(brand.networksData.instagramData).toLowerCase()}` : null;
+  if (tk.status === "error") return { state: "error", error: tk.error, igHandle };
+  if (tk.status !== "ready") return { state: "loading", igHandle };
 
   const byDay = new Map();
   (Array.isArray(tk.data?.rows) ? tk.data.rows : []).forEach((row) => {
@@ -1142,7 +1221,7 @@ function useTikTok(api, enabled) {
   const views = sumNullable(series("TKEV02"));
   const interactions = sumNullable(series("TKEV06"));
   const hasData = [latest, views, interactions].some((v) => isNum(v) && v > 0);
-  return hasData ? { state: "ready", followers: latest, views, interactions } : { state: "syncing" };
+  return hasData ? { state: "ready", followers: latest, views, interactions, igHandle } : { state: "syncing", igHandle };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1491,7 +1570,7 @@ function LiveStrip({ acc, tiktok, onConnectTikTok, onRefresh, refreshing }) {
           <span className={`min-w-0 truncate ${INK2}`}>{n.text}</span>
         </NetworkChip>
       ))}
-      {tiktok.state !== "none" && (
+      {tiktok.state !== "none" && (!tiktok.igHandle || tiktok.igHandle === acc.handle.toLowerCase()) && (
         <NetworkChip icon="music" label="TikTok" active={tiktok.state === "ready"}>
           {tiktok.state === "idle" ? (
             <button type="button" onClick={onConnectTikTok} className={`rounded-full text-[13px] font-medium underline underline-offset-2 ${INK2} hover:text-[color:var(--ink)] ${FOCUS}`}>
@@ -2418,12 +2497,15 @@ export default function InstagramDashboard() {
     };
   }, [mcp.api]);
 
-  const liveModel = useMemo(() => (ig.status === "ready" || ig.batch ? instagramModel(ig) : null), [ig]);
+  // Una tarjeta por cuenta conectada en Composio; las de ejemplo solo cubren cuentas que falten
+  const liveModels = useMemo(() => (ig.accounts ? ig.accounts.map((a) => instagramModel({ ...a, storedAt: ig.storedAt })) : []), [ig]);
+  const hasLive = liveModels.length > 0;
   const accounts = useMemo(() => {
-    if (!liveModel) return SAMPLE_MODELS;
-    const extras = SAMPLE_MODELS.filter((s) => s.id !== "principal" && s.handle.toLowerCase() !== liveModel.handle.toLowerCase());
-    return [liveModel, ...extras];
-  }, [liveModel]);
+    if (!hasLive) return SAMPLE_MODELS;
+    const liveHandles = new Set(liveModels.map((m) => m.handle.toLowerCase()));
+    const extras = SAMPLE_MODELS.filter((s) => s.id !== "principal" && !liveHandles.has(s.handle.toLowerCase()));
+    return [...liveModels, ...extras];
+  }, [liveModels, hasLive]);
 
   const acc = accounts.find((a) => a.id === accountId) || accounts[0];
   const connecting = mcp.status === "connecting" || (mcp.status === "ready" && ig.status === "loading");
@@ -2484,7 +2566,7 @@ export default function InstagramDashboard() {
           theme={theme}
           onToggleTheme={() => setThemeChoice(theme === "dark" ? "light" : "dark")}
           compareLabel={acc.compareSuffix}
-          showSampleTags={!!liveModel}
+          showSampleTags={hasLive}
         />
 
         <header className="mb-6 mt-9 flex flex-wrap items-end justify-between gap-4">
@@ -2514,7 +2596,7 @@ export default function InstagramDashboard() {
           </Banner>
         )}
 
-        {liveModel && acc.source === "sample" && (
+        {hasLive && acc.source === "sample" && (
           <Banner icon="flag">
             <strong className={INK}>{acc.name}</strong> todavía no está conectado, así que estos números son de ejemplo. Conecta su Instagram en Composio y aparecerá aquí con datos reales.
           </Banner>

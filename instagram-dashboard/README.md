@@ -11,11 +11,13 @@ Dashboard estilo "bento" (React + Tailwind) que muestra tus analíticas de Insta
 
 La página usa la capability `mcp` de los artefactos de claude.ai, que llama a tus conectores con tus propias credenciales. La página no guarda nada de lo que lee.
 
-- **Instagram → conector Composio.** Una sola llamada a `COMPOSIO_MULTI_EXECUTE_TOOL` ejecuta en paralelo:
-  - `INSTAGRAM_GET_USER_INFO`: seguidores y número de publicaciones.
-  - `INSTAGRAM_GET_IG_USER_MEDIA` e `INSTAGRAM_GET_IG_USER_STORIES`: publicaciones del feed e historias activas.
-  - `INSTAGRAM_GET_USER_INSIGHTS`: totales de los últimos 30 días y de los 30 anteriores, desglose por tipo de contenido, seguidores ganados y perdidos, alcance diario y demografía.
-  - Una segunda llamada trae `INSTAGRAM_GET_IG_MEDIA_INSIGHTS` de cada historia activa.
+- **Instagram → conector Composio.**
+  - `COMPOSIO_MANAGE_CONNECTIONS` (solo `action: "list"`) descubre las cuentas de Instagram conectadas. Cada una aparece como una pestaña con el alias que le pusiste en Composio (por ejemplo, "Personal" y "Kyros").
+  - Una llamada a `COMPOSIO_MULTI_EXECUTE_TOOL` ejecuta en paralelo, para cada cuenta:
+    - `INSTAGRAM_GET_USER_INFO`: seguidores y número de publicaciones.
+    - `INSTAGRAM_GET_IG_USER_MEDIA` e `INSTAGRAM_GET_IG_USER_STORIES`: publicaciones del feed e historias activas.
+    - `INSTAGRAM_GET_USER_INSIGHTS`: totales de los últimos 30 días y de los 30 anteriores, desglose por tipo de contenido, seguidores ganados y perdidos, alcance diario y demografía.
+  - Una segunda llamada trae `INSTAGRAM_GET_IG_MEDIA_INSIGHTS` de los 6 posts más recientes y de las historias activas de cada cuenta, porque el listado de posts no incluye las vistas.
 - **TikTok → conector Metricool** (`getBrandSettings` y `getAnalyticsDataByMetrics`). Solo se consulta si ya diste permiso a Metricool o si pulsas "Cargar desde Metricool".
 
 Si un conector falla, cada sección muestra qué pasó y cómo arreglarlo (reconectar, agregar el conector o reintentar), y el resto del panel sigue funcionando.
